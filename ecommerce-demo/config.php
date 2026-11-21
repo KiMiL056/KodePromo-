@@ -1,10 +1,18 @@
 <?php
+date_default_timezone_set('Asia/Jakarta');
+
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
 $apiBaseUrl = rtrim(getenv('API_BASE_URL') ?: 'http://127.0.0.1:8000', '/');
 $apiKey = getenv('API_KEY') ?: 'kp_demo_merchant_key_2026';
+
+$presetCustomers = [
+    'CUST-01' => 'Mubarak Subkhi',
+    'CUST-02' => 'Muchel Munthe',
+    'CUST-03' => 'Anjelli Tria',
+];
 
 function callKodePromoApi(string $method, string $url, string $apiKey, ?array $payload = null, ?string $idempotencyKey = null): array
 {
@@ -55,4 +63,20 @@ function callKodePromoApi(string $method, string $url, string $apiKey, ?array $p
 function rupiah(float|int $amount): string
 {
     return 'Rp ' . number_format($amount, 0, ',', '.');
+}
+
+function toIsoWib(string $datetimeLocal): string
+{
+    $dt = new DateTime($datetimeLocal, new DateTimeZone('Asia/Jakarta'));
+    return $dt->format(DateTime::ATOM);
+}
+
+function toDatetimeLocal(?string $isoString): string
+{
+    if (!$isoString) {
+        return '';
+    }
+    $dt = new DateTime($isoString);
+    $dt->setTimezone(new DateTimeZone('Asia/Jakarta'));
+    return $dt->format('Y-m-d\TH:i');
 }
