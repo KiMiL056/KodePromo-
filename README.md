@@ -11,9 +11,9 @@ Repository Tugas Besar 1 Mata Kuliah Komputasi Awan / DevOps (Studi Kasus **K08 
 
 ## Tim Pengembang & Pembagian Peran
 - **Tech Lead / Backend:** Mubarak Subkhi Muhidin
-- **DevOps Engineer:** (Anggota 2)
-- **Container Engineer:** (Anggota 3)
-- **QA Engineer & Tech Writer:** (Anggota 4)
+- **DevOps Engineer:** ahmad nur abid
+- **Container Engineer:** gevira
+- **QA Engineer & Tech Writer:** lian
 
 ## Fitur Utama
 1. Manajemen Kampanye Promosi (`CRUD /api/v1/campaigns`) dan Laporan Penggunaan (`/api/v1/campaigns/{id}/report`).
