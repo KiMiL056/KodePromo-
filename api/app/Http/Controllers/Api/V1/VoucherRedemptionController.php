@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Exceptions\VoucherException;
 use App\Http\Controllers\Controller;
 use App\Models\Merchant;
+use App\Models\Redemption;
 use App\Services\VoucherRedemptionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,6 +19,22 @@ class VoucherRedemptionController extends Controller
     private function merchant(Request $request): Merchant
     {
         return $request->attributes->get('merchant');
+    }
+
+    public function index(Request $request): JsonResponse
+    {
+        $query = Redemption::whereHas('voucher.campaign', fn ($q) => $q->where('merchant_id', $this->merchant($request)->id))
+            ->with('voucher.campaign')
+            ->orderByDesc('id');
+
+        if ($request->filled('user_identifier')) {
+            $query->where('user_identifier', trim((string) $request->query('user_identifier')));
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $query->get(),
+        ]);
     }
 
     public function validateCode(Request $request): JsonResponse
