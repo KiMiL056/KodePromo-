@@ -7,6 +7,7 @@ use App\Models\Campaign;
 use App\Models\Merchant;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class CampaignController extends Controller
 {
@@ -19,7 +20,7 @@ class CampaignController extends Controller
     {
         $campaigns = Campaign::where('merchant_id', $this->merchant($request)->id)
             ->withCount('vouchers')
-            ->latest()
+            ->orderByDesc('id')
             ->get();
 
         return response()->json([
@@ -31,21 +32,26 @@ class CampaignController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
+            'name' => ['required', 'string', 'max:150'],
+            'description' => ['nullable', 'string', 'max:500'],
             'starts_at' => ['required', 'date'],
             'ends_at' => ['required', 'date', 'after:starts_at'],
             'is_active' => ['sometimes', 'boolean'],
         ]);
 
-        $campaign = Campaign::create([
+        $payload = [
             'merchant_id' => $this->merchant($request)->id,
             'name' => $validated['name'],
-            'description' => $validated['description'] ?? null,
             'starts_at' => $validated['starts_at'],
             'ends_at' => $validated['ends_at'],
             'is_active' => $validated['is_active'] ?? true,
-        ]);
+        ];
+
+        if (Schema::hasColumn('campaigns', 'description')) {
+            $payload['description'] = $validated['description'] ?? null;
+        }
+
+        $campaign = Campaign::create($payload);
 
         return response()->json([
             'status' => 'success',
@@ -72,22 +78,15 @@ class CampaignController extends Controller
             ->findOrFail($id);
 
         $validated = $request->validate([
-            'name' => ['sometimes', 'required', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
+            'name' => ['sometimes', 'required', 'string', 'max:150'],
+            'description' => ['nullable', 'string', 'max:500'],
             'starts_at' => ['sometimes', 'required', 'date'],
             'ends_at' => ['sometimes', 'required', 'date'],
             'is_active' => ['sometimes', 'boolean'],
         ]);
 
-        $startsAt = $validated['starts_at'] ?? $campaign->starts_at;
-        $endsAt = $validated['ends_at'] ?? $campaign->ends_at;
-
-        if (strtotime((string) $endsAt) <= strtotime((string) $startsAt)) {
-            return response()->json([
-                'status' => 'error',
-                'code' => 'VALIDATION_ERROR',
-                'message' => 'Tanggal ends_at harus setelah starts_at.',
-            ], 422);
+        if (!Schema::hasColumn('campaigns', 'description')) {
+            unset($validated['description']);
         }
 
         $campaign->update($validated);
@@ -118,22 +117,26 @@ class CampaignController extends Controller
             ->with(['vouchers.redemptions'])
             ->findOrFail($id);
 
-        $allRedemptions = $campaign->vouchers->flatMap->redemptions;
+        $totalRedemptions = 0;
+        $totalOrderAmount = 0.0;
+        $totalDiscountGiven = 0.0;
 
-        $vouchersSummary = $campaign->vouchers->map(function ($voucher) {
+        $voucherBreakdown = $campaign->vouchers->map(function ($v) use (&$totalRedemptions, &$totalOrderAmount, &$totalDiscountGiven) {
+            $count = $v->redemptions->count();
+            $orders = (float) $v->redemptions->sum('order_amount');
+            $discounts = (float) $v->redemptions->sum('discount_amount');
+
+            $totalRedemptions += $count;
+            $totalOrderAmount += $orders;
+            $totalDiscountGiven += $discounts;
+
             return [
-                'id' => $voucher->id,
-                'code' => $voucher->code,
-                'discount_type' => $voucher->discount_type,
-                'discount_value' => $voucher->discount_value,
-                'quota_total' => $voucher->quota_total,
-                'quota_used' => $voucher->quota_used,
-                'quota_remaining' => $voucher->quota_total !== null
-                    ? max(0, $voucher->quota_total - $voucher->quota_used)
-                    : null,
-                'redemptions_count' => $voucher->redemptions->count(),
-                'total_discount_given' => round((float) $voucher->redemptions->sum('discount_amount'), 2),
-                'is_active' => $voucher->is_active,
+                'voucher_id' => $v->id,
+                'code' => $v->code,
+                'quota_total' => $v->quota_total,
+                'quota_used' => $v->quota_used,
+                'redemptions_count' => $count,
+                'total_discount_given' => round($discounts, 2),
             ];
         });
 
@@ -143,17 +146,17 @@ class CampaignController extends Controller
                 'campaign' => [
                     'id' => $campaign->id,
                     'name' => $campaign->name,
-                    'starts_at' => $campaign->starts_at->toIso8601String(),
-                    'ends_at' => $campaign->ends_at->toIso8601String(),
+                    'starts_at' => $campaign->starts_at?->toIso8601String(),
+                    'ends_at' => $campaign->ends_at?->toIso8601String(),
                     'is_active' => $campaign->is_active,
                 ],
                 'summary' => [
                     'total_vouchers' => $campaign->vouchers->count(),
-                    'total_redemptions' => $allRedemptions->count(),
-                    'total_order_amount' => round((float) $allRedemptions->sum('order_amount'), 2),
-                    'total_discount_given' => round((float) $allRedemptions->sum('discount_amount'), 2),
+                    'total_redemptions' => $totalRedemptions,
+                    'total_order_amount' => round($totalOrderAmount, 2),
+                    'total_discount_given' => round($totalDiscountGiven, 2),
                 ],
-                'vouchers' => $vouchersSummary,
+                'vouchers' => $voucherBreakdown,
             ],
         ]);
     }

@@ -10,16 +10,13 @@ use Illuminate\Support\Facades\DB;
 
 class VoucherRedemptionService
 {
-    /**
-     * Simulasi validasi voucher tanpa mengubah kuota (BR-01 s.d. BR-06).
-     */
     public function validateVoucher(
         Merchant $merchant,
         string $code,
         float $orderAmount,
         string $userIdentifier
     ): array {
-        $normalizedCode = strtoupper(trim($code));
+        $normalizedCode = $this->normalizeSingleCode($code);
 
         $voucher = Voucher::where('code', $normalizedCode)
             ->whereHas('campaign', fn ($q) => $q->where('merchant_id', $merchant->id))
@@ -36,6 +33,8 @@ class VoucherRedemptionService
                 'id' => $voucher->id,
                 'code' => $voucher->code,
                 'campaign_name' => $voucher->campaign->name,
+                'starts_at' => $voucher->campaign->starts_at?->toIso8601String(),
+                'ends_at' => $voucher->campaign->ends_at?->toIso8601String(),
                 'discount_type' => $voucher->discount_type,
                 'discount_value' => $voucher->discount_value,
                 'max_discount' => $voucher->max_discount,
@@ -52,9 +51,6 @@ class VoucherRedemptionService
         ];
     }
 
-    /**
-     * Penukaran voucher atomik dengan row-lock dan idempotency key (BR-01 s.d. BR-09).
-     */
     public function redeemVoucher(
         Merchant $merchant,
         string $code,
@@ -63,7 +59,7 @@ class VoucherRedemptionService
         string $userIdentifier,
         ?string $idempotencyKey = null
     ): array {
-        $normalizedCode = strtoupper(trim($code));
+        $normalizedCode = $this->normalizeSingleCode($code);
         $trimmedKey = $idempotencyKey ? trim($idempotencyKey) : null;
 
         return DB::transaction(function () use (
@@ -74,7 +70,6 @@ class VoucherRedemptionService
             $userIdentifier,
             $trimmedKey
         ) {
-            // BR-08: Cek idempotency key lebih dulu agar retry tidak memotong kuota dua kali
             if ($trimmedKey) {
                 $existingByKey = Redemption::where('idempotency_key', $trimmedKey)
                     ->whereHas('voucher.campaign', fn ($q) => $q->where('merchant_id', $merchant->id))
@@ -90,7 +85,6 @@ class VoucherRedemptionService
                 }
             }
 
-            // BR-07: Kunci baris voucher di database selama transaksi berjalan
             $voucher = Voucher::where('code', $normalizedCode)
                 ->whereHas('campaign', fn ($q) => $q->where('merchant_id', $merchant->id))
                 ->with('campaign')
@@ -99,23 +93,32 @@ class VoucherRedemptionService
 
             $this->assertEligible($voucher, $orderAmount, $userIdentifier);
 
-            // BR-08: Tolak jika order_id yang sama sudah memakai voucher ini
-            $alreadyRedeemedOrder = Redemption::where('voucher_id', $voucher->id)
-                ->where('order_id', $orderId)
-                ->exists();
+            // Aturan Bisnis: Dua voucher tidak dapat digabung pada 1 order_id
+            $existingOrderRedemption = Redemption::where('order_id', $orderId)
+                ->whereHas('voucher.campaign', fn ($q) => $q->where('merchant_id', $merchant->id))
+                ->with('voucher')
+                ->first();
 
-            if ($alreadyRedeemedOrder) {
+            if ($existingOrderRedemption) {
+                $usedCode = $existingOrderRedemption->voucher->code;
+                if ($usedCode === $voucher->code) {
+                    throw new VoucherException(
+                        'ORDER_ALREADY_REDEEMED',
+                        "Order '{$orderId}' sudah pernah menukarkan voucher '{$voucher->code}'.",
+                        409
+                    );
+                }
+
                 throw new VoucherException(
-                    'ORDER_ALREADY_REDEEMED',
-                    "Order '{$orderId}' sudah pernah menukarkan voucher '{$voucher->code}'.",
-                    409
+                    'VOUCHER_CANNOT_BE_COMBINED',
+                    "Dua voucher tidak dapat digabung. Order '{$orderId}' sudah memakai voucher '{$usedCode}'.",
+                    422,
+                    ['applied_voucher' => $usedCode]
                 );
             }
 
-            // BR-06: Hitung nominal potongan
             [$discountAmount, $finalAmount] = $this->calculateDiscount($voucher, $orderAmount);
 
-            // BR-09: Catat transaksi redemption & naikkan quota_used
             $redemption = Redemption::create([
                 'voucher_id' => $voucher->id,
                 'order_id' => $orderId,
@@ -138,33 +141,32 @@ class VoucherRedemptionService
         });
     }
 
+    private function normalizeSingleCode(string $code): string
+    {
+        $normalized = strtoupper(trim($code));
+        if (preg_match('/[,;+\s]/', $normalized)) {
+            throw new VoucherException(
+                'VOUCHER_CANNOT_BE_COMBINED',
+                'Dua voucher tidak dapat digabung dalam satu transaksi. Gunakan hanya 1 kode voucher.',
+                422
+            );
+        }
+        return $normalized;
+    }
+
     private function assertEligible(?Voucher $voucher, float $orderAmount, string $userIdentifier): void
     {
-        // BR-01: Voucher ditemukan & aktif
         if (!$voucher) {
-            throw new VoucherException(
-                'VOUCHER_NOT_FOUND',
-                'Kode voucher tidak ditemukan.',
-                404
-            );
+            throw new VoucherException('VOUCHER_NOT_FOUND', 'Kode voucher tidak ditemukan.', 404);
         }
 
         if (!$voucher->is_active) {
-            throw new VoucherException(
-                'VOUCHER_INACTIVE',
-                "Voucher '{$voucher->code}' sedang tidak aktif.",
-                422
-            );
+            throw new VoucherException('VOUCHER_INACTIVE', "Voucher '{$voucher->code}' sedang tidak aktif.", 422);
         }
 
-        // BR-02: Kampanye aktif & berada dalam rentang waktu berlaku
         $campaign = $voucher->campaign;
         if (!$campaign || !$campaign->is_active) {
-            throw new VoucherException(
-                'CAMPAIGN_INACTIVE',
-                'Kampanye untuk voucher ini sedang tidak aktif.',
-                422
-            );
+            throw new VoucherException('CAMPAIGN_INACTIVE', 'Kampanye untuk voucher ini sedang tidak aktif.', 422);
         }
 
         $now = now();
@@ -186,7 +188,6 @@ class VoucherRedemptionService
             );
         }
 
-        // BR-03: Minimum belanja terpenuhi
         if ($orderAmount < $voucher->min_order_amount) {
             throw new VoucherException(
                 'MIN_ORDER_NOT_MET',
@@ -199,16 +200,10 @@ class VoucherRedemptionService
             );
         }
 
-        // BR-04: Kuota total masih tersedia
         if ($voucher->quota_total !== null && $voucher->quota_used >= $voucher->quota_total) {
-            throw new VoucherException(
-                'QUOTA_EXCEEDED',
-                "Kuota voucher '{$voucher->code}' sudah habis.",
-                422
-            );
+            throw new VoucherException('QUOTA_EXCEEDED', "Kuota voucher '{$voucher->code}' sudah habis.", 422);
         }
 
-        // BR-05: Batas pemakaian per pengguna
         $userUses = Redemption::where('voucher_id', $voucher->id)
             ->where('user_identifier', $userIdentifier)
             ->count();
@@ -216,16 +211,13 @@ class VoucherRedemptionService
         if ($userUses >= $voucher->max_uses_per_user) {
             throw new VoucherException(
                 'USER_LIMIT_EXCEEDED',
-                'Batas penggunaan voucher untuk pengguna ini telah tercapai.',
+                'Batas penggunaan 1x voucher untuk akun customer ini telah tercapai.',
                 422,
                 ['max_uses_per_user' => $voucher->max_uses_per_user]
             );
         }
     }
 
-    /**
-     * @return array{0: float, 1: float} [discountAmount, finalAmount]
-     */
     private function calculateDiscount(Voucher $voucher, float $orderAmount): array
     {
         if ($voucher->discount_type === 'percentage') {

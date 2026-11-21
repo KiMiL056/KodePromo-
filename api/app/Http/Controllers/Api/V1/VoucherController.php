@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\Campaign;
 use App\Models\Merchant;
 use App\Models\Voucher;
 use Illuminate\Http\JsonResponse;
@@ -18,19 +19,14 @@ class VoucherController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $merchantId = $this->merchant($request)->id;
-
-        $query = Voucher::whereHas('campaign', function ($q) use ($merchantId) {
-            $q->where('merchant_id', $merchantId);
-        })->with('campaign:id,name,starts_at,ends_at,is_active');
-
-        if ($request->filled('campaign_id')) {
-            $query->where('campaign_id', (int) $request->query('campaign_id'));
-        }
+        $vouchers = Voucher::whereHas('campaign', fn ($q) => $q->where('merchant_id', $this->merchant($request)->id))
+            ->with('campaign')
+            ->orderByDesc('id')
+            ->get();
 
         return response()->json([
             'status' => 'success',
-            'data' => $query->latest()->get(),
+            'data' => $vouchers,
         ]);
     }
 
@@ -38,25 +34,16 @@ class VoucherController extends Controller
     {
         $merchantId = $this->merchant($request)->id;
 
-        if ($request->has('code')) {
-            $request->merge(['code' => strtoupper(trim((string) $request->input('code')))]);
-        }
-
         $validated = $request->validate([
             'campaign_id' => [
                 'required',
                 'integer',
                 Rule::exists('campaigns', 'id')->where('merchant_id', $merchantId),
             ],
-            'code' => ['required', 'string', 'max:50', 'alpha_dash', 'unique:vouchers,code'],
+            'code' => ['required', 'string', 'max:50', 'unique:vouchers,code'],
             'discount_type' => ['required', Rule::in(['percentage', 'fixed'])],
-            'discount_value' => [
-                'required',
-                'numeric',
-                'gt:0',
-                Rule::when($request->input('discount_type') === 'percentage', ['lte:100']),
-            ],
-            'max_discount' => ['nullable', 'numeric', 'gt:0'],
+            'discount_value' => ['required', 'numeric', 'gt:0'],
+            'max_discount' => ['nullable', 'numeric', 'min:0'],
             'min_order_amount' => ['nullable', 'numeric', 'min:0'],
             'quota_total' => ['nullable', 'integer', 'min:1'],
             'max_uses_per_user' => ['nullable', 'integer', 'min:1'],
@@ -65,12 +52,10 @@ class VoucherController extends Controller
 
         $voucher = Voucher::create([
             'campaign_id' => $validated['campaign_id'],
-            'code' => $validated['code'],
+            'code' => strtoupper(trim($validated['code'])),
             'discount_type' => $validated['discount_type'],
             'discount_value' => $validated['discount_value'],
-            'max_discount' => $validated['discount_type'] === 'percentage'
-                ? ($validated['max_discount'] ?? null)
-                : null,
+            'max_discount' => $validated['discount_type'] === 'percentage' ? ($validated['max_discount'] ?? null) : null,
             'min_order_amount' => $validated['min_order_amount'] ?? 0,
             'quota_total' => $validated['quota_total'] ?? null,
             'quota_used' => 0,
@@ -81,17 +66,15 @@ class VoucherController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'Voucher berhasil dibuat.',
-            'data' => $voucher->load('campaign:id,name'),
+            'data' => $voucher->load('campaign'),
         ], 201);
     }
 
     public function show(Request $request, int $id): JsonResponse
     {
-        $merchantId = $this->merchant($request)->id;
-
-        $voucher = Voucher::whereHas('campaign', function ($q) use ($merchantId) {
-            $q->where('merchant_id', $merchantId);
-        })->with('campaign:id,name,starts_at,ends_at,is_active')->findOrFail($id);
+        $voucher = Voucher::whereHas('campaign', fn ($q) => $q->where('merchant_id', $this->merchant($request)->id))
+            ->with('campaign')
+            ->findOrFail($id);
 
         return response()->json([
             'status' => 'success',
@@ -102,16 +85,8 @@ class VoucherController extends Controller
     public function update(Request $request, int $id): JsonResponse
     {
         $merchantId = $this->merchant($request)->id;
-
-        $voucher = Voucher::whereHas('campaign', function ($q) use ($merchantId) {
-            $q->where('merchant_id', $merchantId);
-        })->findOrFail($id);
-
-        if ($request->has('code')) {
-            $request->merge(['code' => strtoupper(trim((string) $request->input('code')))]);
-        }
-
-        $effectiveType = $request->input('discount_type', $voucher->discount_type);
+        $voucher = Voucher::whereHas('campaign', fn ($q) => $q->where('merchant_id', $merchantId))
+            ->findOrFail($id);
 
         $validated = $request->validate([
             'campaign_id' => [
@@ -120,45 +95,33 @@ class VoucherController extends Controller
                 'integer',
                 Rule::exists('campaigns', 'id')->where('merchant_id', $merchantId),
             ],
-            'code' => [
-                'sometimes',
-                'required',
-                'string',
-                'max:50',
-                'alpha_dash',
-                Rule::unique('vouchers', 'code')->ignore($voucher->id),
-            ],
+            'code' => ['sometimes', 'required', 'string', 'max:50', Rule::unique('vouchers', 'code')->ignore($voucher->id)],
             'discount_type' => ['sometimes', 'required', Rule::in(['percentage', 'fixed'])],
-            'discount_value' => [
-                'sometimes',
-                'required',
-                'numeric',
-                'gt:0',
-                Rule::when($effectiveType === 'percentage', ['lte:100']),
-            ],
-            'max_discount' => ['nullable', 'numeric', 'gt:0'],
+            'discount_value' => ['sometimes', 'required', 'numeric', 'gt:0'],
+            'max_discount' => ['nullable', 'numeric', 'min:0'],
             'min_order_amount' => ['nullable', 'numeric', 'min:0'],
-            'quota_total' => ['nullable', 'integer', 'min:' . max(1, $voucher->quota_used)],
+            'quota_total' => ['nullable', 'integer', 'min:1'],
             'max_uses_per_user' => ['nullable', 'integer', 'min:1'],
             'is_active' => ['sometimes', 'boolean'],
         ]);
+
+        if (isset($validated['code'])) {
+            $validated['code'] = strtoupper(trim($validated['code']));
+        }
 
         $voucher->update($validated);
 
         return response()->json([
             'status' => 'success',
             'message' => 'Voucher berhasil diperbarui.',
-            'data' => $voucher->fresh('campaign:id,name'),
+            'data' => $voucher->fresh()->load('campaign'),
         ]);
     }
 
     public function destroy(Request $request, int $id): JsonResponse
     {
-        $merchantId = $this->merchant($request)->id;
-
-        $voucher = Voucher::whereHas('campaign', function ($q) use ($merchantId) {
-            $q->where('merchant_id', $merchantId);
-        })->findOrFail($id);
+        $voucher = Voucher::whereHas('campaign', fn ($q) => $q->where('merchant_id', $this->merchant($request)->id))
+            ->findOrFail($id);
 
         $voucher->delete();
 
