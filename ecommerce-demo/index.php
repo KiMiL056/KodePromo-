@@ -1,454 +1,676 @@
 <?php
 require_once __DIR__ . '/config.php';
 
-$products = [
-    'p1' => ['name' => 'Mechanical Keyboard Wireless 75%', 'price' => 450000, 'tag' => 'Elektronik'],
-    'p2' => ['name' => 'Mouse Gaming Ergonomic RGB', 'price' => 180000, 'tag' => 'Aksesoris'],
-    'p3' => ['name' => 'USB-C Hub 7-in-1 Aluminum', 'price' => 120000, 'tag' => 'Aksesoris'],
-    'p4' => ['name' => 'Kabel Braided Fast Charging 2M', 'price' => 45000, 'tag' => 'Hemat'],
-];
+if (!isset($_SESSION['cart']) || !is_array($_SESSION['cart']) || empty($_SESSION['cart'])) {
+    $_SESSION['cart'] = [
+        [
+            'sku' => 'SKU-01',
+            'name' => 'Kopi Arabika Gayo 250g',
+            'price' => 85000,
+            'qty' => 2,
+        ],
+        [
+            'sku' => 'SKU-02',
+            'name' => 'Tumbler Stainless Matte 500ml',
+            'price' => 110000,
+            'qty' => 1,
+        ],
+    ];
+}
 
-// Kelola identitas customer (ID Akun + Nama) di session
-if (!isset($_SESSION['customer'])) {
-    $_SESSION['customer'] = ['id' => 'CUST-01', 'name' => 'Mubarak Subkhi'];
+if (!isset($_SESSION['checkout_customer'])) {
+    $_SESSION['checkout_customer'] = [
+        'customer_id' => '',
+        'customer_name' => '',
+    ];
+}
+
+if (!isset($_SESSION['applied_voucher_code'])) {
+    $_SESSION['applied_voucher_code'] = '';
+}
+
+$flashSuccess = null;
+$flashError = null;
+$lastOrder = $_SESSION['last_order'] ?? null;
+
+function calculateCartSubtotal(array $cart): float
+{
+    $total = 0;
+    foreach ($cart as $item) {
+        $total += ((float) ($item['price'] ?? 0)) * ((int) ($item['qty'] ?? 0));
+    }
+    return $total;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $postedId = strtoupper(trim((string) ($_POST['customer_id'] ?? $_SESSION['customer']['id'])));
-    $postedName = trim((string) ($_POST['customer_name'] ?? $_SESSION['customer']['name']));
-    if ($postedId !== '' && $postedName !== '') {
-        $_SESSION['customer'] = ['id' => $postedId, 'name' => $postedName];
-    }
-}
+    $action = $_POST['action'] ?? '';
 
-$customerId = $_SESSION['customer']['id'];
-$customerName = $_SESSION['customer']['name'];
-$userIdentifier = $customerId . ' - ' . $customerName;
+    if ($action === 'update_customer') {
+        $customerId = trim((string) ($_POST['customer_id'] ?? ''));
+        $customerName = trim((string) ($_POST['customer_name'] ?? ''));
 
-$selectedQuantities = $_POST['qty'] ?? ['p1' => 0, 'p2' => 1, 'p3' => 0, 'p4' => 0];
-$voucherCode = strtoupper(trim((string) ($_POST['voucher_code'] ?? '')));
-$orderId = trim((string) ($_POST['order_id'] ?? ('ORD-' . date('His'))));
-$action = $_POST['action'] ?? null;
-
-$orderAmount = 0;
-foreach ($products as $id => $item) {
-    $qty = max(0, (int) ($selectedQuantities[$id] ?? 0));
-    $selectedQuantities[$id] = $qty;
-    $orderAmount += $item['price'] * $qty;
-}
-
-$apiResult = null;
-$lastEndpoint = null;
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action && $action !== 'switch_customer') {
-    if ($action === 'validate') {
-        $lastEndpoint = 'POST /api/v1/vouchers/validate';
-        $apiResult = callKodePromoApi('POST', $apiBaseUrl . '/api/v1/vouchers/validate', $apiKey, [
-            'code' => $voucherCode,
-            'order_amount' => $orderAmount,
-            'user_identifier' => $userIdentifier,
-        ]);
-    } elseif ($action === 'redeem') {
-        $idemKey = 'idem-' . $orderId . '-' . bin2hex(random_bytes(3));
-        $_SESSION['last_redeem'] = [
-            'code' => $voucherCode,
-            'order_id' => $orderId,
-            'order_amount' => $orderAmount,
-            'user_identifier' => $userIdentifier,
-            'idempotency_key' => $idemKey,
+        if ($customerId === '') {
+            $flashError = 'ID Akun / Customer wajib diisi.';
+        } else {
+            $_SESSION['checkout_customer'] = [
+                'customer_id' => $customerId,
+                'customer_name' => $customerName !== '' ? $customerName : $customerId,
+            ];
+            $flashSuccess = 'Informasi akun disimpan untuk ' . $_SESSION['checkout_customer']['customer_name'] . ' (' . $customerId . ').';
+        }
+    } elseif ($action === 'update_qty') {
+        $sku = (string) ($_POST['sku'] ?? '');
+        $qty = (int) ($_POST['qty'] ?? 1);
+        foreach ($_SESSION['cart'] as &$item) {
+            if ($item['sku'] === $sku) {
+                if ($qty <= 0) {
+                    $item['qty'] = 1;
+                } elseif ($qty > 20) {
+                    $item['qty'] = 20;
+                } else {
+                    $item['qty'] = $qty;
+                }
+                break;
+            }
+        }
+        unset($item);
+        $flashSuccess = 'Jumlah item di keranjang diperbarui.';
+    } elseif ($action === 'remove_item') {
+        $sku = (string) ($_POST['sku'] ?? '');
+        if (count($_SESSION['cart']) > 1) {
+            $_SESSION['cart'] = array_values(array_filter(
+                $_SESSION['cart'],
+                fn($item) => ($item['sku'] ?? '') !== $sku
+            ));
+            $flashSuccess = 'Item dihapus dari keranjang.';
+        } else {
+            $flashError = 'Minimal harus ada 1 item di keranjang.';
+        }
+    } elseif ($action === 'reset_cart') {
+        $_SESSION['cart'] = [
+            [
+                'sku' => 'SKU-01',
+                'name' => 'Kopi Arabika Gayo 250g',
+                'price' => 85000,
+                'qty' => 2,
+            ],
+            [
+                'sku' => 'SKU-02',
+                'name' => 'Tumbler Stainless Matte 500ml',
+                'price' => 110000,
+                'qty' => 1,
+            ],
         ];
-        $lastEndpoint = "POST /api/v1/vouchers/redeem (Idempotency-Key: {$idemKey})";
-        $apiResult = callKodePromoApi('POST', $apiBaseUrl . '/api/v1/vouchers/redeem', $apiKey, [
-            'code' => $voucherCode,
-            'order_id' => $orderId,
-            'order_amount' => $orderAmount,
-            'user_identifier' => $userIdentifier,
-        ], $idemKey);
-    } elseif ($action === 'retry_idempotent' && !empty($_SESSION['last_redeem'])) {
-        $last = $_SESSION['last_redeem'];
-        $voucherCode = $last['code'];
-        $orderId = $last['order_id'];
-        $orderAmount = $last['order_amount'];
-        $userIdentifier = $last['user_identifier'];
-        $idemKey = $last['idempotency_key'];
+        $_SESSION['applied_voucher_code'] = '';
+        unset($_SESSION['last_order']);
+        $lastOrder = null;
+        $flashSuccess = 'Keranjang dikembalikan ke daftar awal.';
+    } elseif ($action === 'apply_voucher') {
+        $code = strtoupper(trim((string) ($_POST['voucher_code'] ?? '')));
+        $customerId = trim((string) ($_POST['customer_id'] ?? ($_SESSION['checkout_customer']['customer_id'] ?? '')));
+        $customerName = trim((string) ($_POST['customer_name'] ?? ($_SESSION['checkout_customer']['customer_name'] ?? '')));
 
-        $lastEndpoint = "RETRY POST /api/v1/vouchers/redeem (Idempotency-Key: {$idemKey})";
-        $apiResult = callKodePromoApi('POST', $apiBaseUrl . '/api/v1/vouchers/redeem', $apiKey, [
-            'code' => $voucherCode,
-            'order_id' => $orderId,
-            'order_amount' => $orderAmount,
-            'user_identifier' => $userIdentifier,
-        ], $idemKey);
+        if ($customerId !== '') {
+            $_SESSION['checkout_customer'] = [
+                'customer_id' => $customerId,
+                'customer_name' => $customerName !== '' ? $customerName : $customerId,
+            ];
+        }
+
+        if ($code === '') {
+            $flashError = 'Masukkan atau pilih kode voucher terlebih dahulu.';
+        } elseif ($customerId === '') {
+            $flashError = 'Masukkan ID akun customer terlebih dahulu sebelum menggunakan voucher.';
+        } else {
+            $subtotal = calculateCartSubtotal($_SESSION['cart']);
+            $validateRes = callKodePromoApi('POST', $apiBaseUrl . '/api/v1/vouchers/validate', $apiKey, [
+                'code' => $code,
+                'order_amount' => $subtotal,
+                'user_identifier' => $customerId,
+                'customer_id' => $customerId,
+                'order_total' => $subtotal,
+            ]);
+
+            $vBody = $validateRes['body'];
+            $isValid = ($validateRes['http_code'] >= 200 && $validateRes['http_code'] < 300)
+                && (($vBody['valid'] ?? false) === true || ($vBody['status'] ?? '') === 'valid' || ($vBody['status'] ?? '') === 'success' || isset($vBody['data']['discount_amount']) || isset($vBody['discount_amount']));
+
+            if ($isValid) {
+                $_SESSION['applied_voucher_code'] = $code;
+                $flashSuccess = 'Voucher ' . $code . ' berhasil diterapkan ke pesanan Anda.';
+            } else {
+                $_SESSION['applied_voucher_code'] = '';
+                $flashError = $vBody['message'] ?? ($vBody['reason'] ?? 'Voucher tidak dapat digunakan untuk pesanan ini.');
+            }
+        }
+    } elseif ($action === 'clear_voucher') {
+        $_SESSION['applied_voucher_code'] = '';
+        $flashSuccess = 'Voucher dilepas dari pesanan.';
+    } elseif ($action === 'checkout_redeem') {
+        $customerId = trim((string) ($_POST['customer_id'] ?? ($_SESSION['checkout_customer']['customer_id'] ?? '')));
+        $customerName = trim((string) ($_POST['customer_name'] ?? ($_SESSION['checkout_customer']['customer_name'] ?? '')));
+        $voucherCode = strtoupper(trim((string) ($_POST['voucher_code'] ?? ($_SESSION['applied_voucher_code'] ?? ''))));
+
+        if ($customerId === '') {
+            $flashError = 'Masukkan ID akun customer terlebih dahulu untuk melanjutkan pembayaran.';
+        } else {
+            $_SESSION['checkout_customer'] = [
+                'customer_id' => $customerId,
+                'customer_name' => $customerName !== '' ? $customerName : $customerId,
+            ];
+
+            $subtotal = calculateCartSubtotal($_SESSION['cart']);
+            $orderId = 'ORD-' . strtoupper(substr(bin2hex(random_bytes(3)), 0, 6));
+
+            if ($voucherCode === '') {
+                $lastOrder = [
+                    'order_ref' => $orderId,
+                    'customer_id' => $customerId,
+                    'customer_name' => $_SESSION['checkout_customer']['customer_name'],
+                    'voucher_code' => null,
+                    'subtotal' => $subtotal,
+                    'discount' => 0,
+                    'total' => $subtotal,
+                    'paid_at' => formatWibDisplay((new DateTimeImmutable('now', new DateTimeZone('Asia/Jakarta')))->format('c')),
+                ];
+                $_SESSION['last_order'] = $lastOrder;
+                $_SESSION['applied_voucher_code'] = '';
+                $flashSuccess = 'Pembayaran berhasil diproses dengan nomor pesanan ' . $orderId . '.';
+            } else {
+                $idemKey = 'order-' . $customerId . '-' . $voucherCode . '-' . substr(sha1($customerId . '|' . $voucherCode . '|' . $subtotal . '|' . date('YmdHis')), 0, 12);
+                $redeemRes = callKodePromoApi('POST', $apiBaseUrl . '/api/v1/vouchers/redeem', $apiKey, [
+                    'code' => $voucherCode,
+                    'order_id' => $orderId,
+                    'order_amount' => $subtotal,
+                    'user_identifier' => $customerId,
+                ], $idemKey);
+
+                $rBody = $redeemRes['body'];
+                if ($redeemRes['http_code'] >= 200 && $redeemRes['http_code'] < 300) {
+                    $data = $rBody['data'] ?? $rBody;
+                    $discount = (float) ($data['discount_amount'] ?? ($data['discount'] ?? 0));
+                    $finalTotal = isset($data['final_amount'])
+                        ? (float) $data['final_amount']
+                        : (isset($data['final_total']) ? (float) $data['final_total'] : max(0, $subtotal - $discount));
+                    $orderRef = (string) ($data['order_id'] ?? ($data['order_ref'] ?? ($data['redemption_code'] ?? $orderId)));
+
+                    $lastOrder = [
+                        'order_ref' => $orderRef,
+                        'customer_id' => $customerId,
+                        'customer_name' => $_SESSION['checkout_customer']['customer_name'],
+                        'voucher_code' => $voucherCode,
+                        'subtotal' => $subtotal,
+                        'discount' => $discount,
+                        'total' => $finalTotal,
+                        'paid_at' => formatWibDisplay((new DateTimeImmutable('now', new DateTimeZone('Asia/Jakarta')))->format('c')),
+                    ];
+                    $_SESSION['last_order'] = $lastOrder;
+                    $_SESSION['applied_voucher_code'] = '';
+                    $flashSuccess = 'Pembayaran berhasil! Voucher ' . $voucherCode . ' terpakai (No. Pesanan: ' . $orderRef . ').';
+                } else {
+                    $flashError = $rBody['message'] ?? ($rBody['reason'] ?? 'Voucher tidak dapat digunakan atau batas pemakaian akun telah tercapai.');
+                }
+            }
+        }
+    }
+
+    header('Location: index.php?flash=' . urlencode($flashSuccess ? 'ok:' . $flashSuccess : 'err:' . ($flashError ?? '')));
+    exit;
+}
+
+if (isset($_GET['flash'])) {
+    $rawFlash = (string) $_GET['flash'];
+    if (str_starts_with($rawFlash, 'ok:')) {
+        $flashSuccess = substr($rawFlash, 3);
+    } elseif (str_starts_with($rawFlash, 'err:')) {
+        $flashError = substr($rawFlash, 4);
     }
 }
 
-$healthCheck = callKodePromoApi('GET', $apiBaseUrl . '/health', $apiKey);
-$vouchersList = callKodePromoApi('GET', $apiBaseUrl . '/api/v1/vouchers', $apiKey);
-$availableVouchers = $vouchersList['body']['data'] ?? [];
+$customerId = (string) ($_SESSION['checkout_customer']['customer_id'] ?? '');
+$customerName = (string) ($_SESSION['checkout_customer']['customer_name'] ?? '');
+$appliedVoucherCode = (string) ($_SESSION['applied_voucher_code'] ?? '');
+$subtotal = calculateCartSubtotal($_SESSION['cart']);
 
-// Ambil riwayat redeem milik akun customer aktif untuk mengunci voucher yang sudah dipakai 1x
-$userRedemptionsResp = callKodePromoApi(
-    'GET',
-    $apiBaseUrl . '/api/v1/redemptions?user_identifier=' . urlencode($userIdentifier),
-    $apiKey
-);
-$userRedemptions = $userRedemptionsResp['body']['data'] ?? [];
-$usedVoucherCounts = [];
-foreach ($userRedemptions as $red) {
-    $c = strtoupper((string) ($red['voucher']['code'] ?? ''));
-    if ($c !== '') {
-        $usedVoucherCounts[$c] = ($usedVoucherCounts[$c] ?? 0) + 1;
+$vouchersList = [];
+$campaignsList = [];
+$vouchersRes = callKodePromoApi('GET', $apiBaseUrl . '/api/v1/vouchers', $apiKey);
+if ($vouchersRes['http_code'] >= 200 && $vouchersRes['http_code'] < 300) {
+    $rawV = $vouchersRes['body']['data'] ?? $vouchersRes['body'];
+    if (is_array($rawV)) {
+        $vouchersList = array_values(array_filter($rawV, 'is_array'));
     }
 }
+
+$campaignsRes = callKodePromoApi('GET', $apiBaseUrl . '/api/v1/campaigns', $apiKey);
+if ($campaignsRes['http_code'] >= 200 && $campaignsRes['http_code'] < 300) {
+    $rawC = $campaignsRes['body']['data'] ?? $campaignsRes['body'];
+    if (is_array($rawC)) {
+        foreach ($rawC as $c) {
+            if (is_array($c) && isset($c['id'])) {
+                $campaignsList[(int) $c['id']] = $c;
+            }
+        }
+    }
+}
+
+$activeVoucher = null;
+foreach ($vouchersList as $v) {
+    if ($appliedVoucherCode !== '' && strtoupper((string) ($v['code'] ?? '')) === $appliedVoucherCode) {
+        $activeVoucher = $v;
+        break;
+    }
+}
+
+$estimatedDiscount = 0.0;
+$voucherNotice = null;
+if ($activeVoucher !== null) {
+    $minOrder = (float) ($activeVoucher['min_order_amount'] ?? ($activeVoucher['min_purchase'] ?? 0));
+    $statusV = strtolower((string) ($activeVoucher['status'] ?? 'active'));
+    $quotaTotal = isset($activeVoucher['quota_total']) ? (int) $activeVoucher['quota_total'] : (isset($activeVoucher['quota']) ? (int) $activeVoucher['quota'] : null);
+    $quotaUsed = (int) ($activeVoucher['quota_used'] ?? ($activeVoucher['used_count'] ?? ($activeVoucher['redeemed_count'] ?? 0)));
+
+    $campId = isset($activeVoucher['campaign_id']) ? (int) $activeVoucher['campaign_id'] : null;
+    $camp = ($campId && isset($campaignsList[$campId])) ? $campaignsList[$campId] : null;
+    $nowWib = new DateTimeImmutable('now', new DateTimeZone('Asia/Jakarta'));
+    $startDt = parseWibDateTime($activeVoucher['starts_at'] ?? ($camp['starts_at'] ?? null));
+    $endDt = parseWibDateTime($activeVoucher['ends_at'] ?? ($camp['ends_at'] ?? null));
+
+    if ($statusV !== 'active' && $statusV !== 'aktif') {
+        $voucherNotice = 'Voucher sedang tidak aktif.';
+    } elseif ($startDt && $nowWib < $startDt) {
+        $voucherNotice = 'Periode voucher belum dimulai.';
+    } elseif ($endDt && $nowWib > $endDt) {
+        $voucherNotice = 'Masa berlaku voucher sudah berakhir.';
+    } elseif ($quotaTotal !== null && $quotaUsed >= $quotaTotal) {
+        $voucherNotice = 'Kuota voucher sudah habis.';
+    } elseif ($minOrder > 0 && $subtotal < $minOrder) {
+        $voucherNotice = 'Minimal belanja ' . rupiah($minOrder) . ' untuk menggunakan voucher ini.';
+    } else {
+        $discType = strtolower((string) ($activeVoucher['discount_type'] ?? 'fixed'));
+        $discVal = (float) ($activeVoucher['discount_value'] ?? 0);
+        $maxDisc = isset($activeVoucher['max_discount']) && $activeVoucher['max_discount'] !== null ? (float) $activeVoucher['max_discount'] : null;
+
+        if ($discType === 'percent' || $discType === 'percentage') {
+            $estimatedDiscount = ($subtotal * $discVal) / 100.0;
+            if ($maxDisc !== null && $maxDisc > 0) {
+                $estimatedDiscount = min($estimatedDiscount, $maxDisc);
+            }
+        } else {
+            $estimatedDiscount = $discVal;
+        }
+        $estimatedDiscount = min($estimatedDiscount, $subtotal);
+    }
+}
+
+$estimatedTotal = max(0.0, $subtotal - $estimatedDiscount);
 ?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KodePromo Store — Halaman Customer (Checkout)</title>
+    <title>Checkout — KodePromo</title>
     <style>
-        :root { --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #f8fafc; --muted: #94a3b8; --primary: #3b82f6; --success: #10b981; --danger: #ef4444; --warn: #f59e0b; }
-        * { box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
-        body { margin: 0; background: var(--bg); color: var(--text); padding: 24px; }
-        .container { max-width: 1160px; margin: 0 auto; }
-        .navbar { display: flex; justify-content: space-between; align-items: center; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 22px; margin-bottom: 22px; flex-wrap: wrap; gap: 12px; }
-        .nav-links { display: flex; gap: 10px; align-items: center; }
-        .nav-tab { text-decoration: none; padding: 8px 14px; border-radius: 8px; font-size: 0.9rem; font-weight: 600; color: var(--muted); border: 1px solid transparent; }
-        .nav-tab.active { background: rgba(59,130,246,0.18); color: #60a5fa; border-color: #2563eb; }
-        .nav-tab:hover:not(.active) { color: var(--text); background: #0f172a; }
-        .badge { padding: 6px 12px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
-        .badge-ok { background: rgba(16,185,129,0.18); color: #34d399; border: 1px solid #059669; }
-        .badge-err { background: rgba(239,68,68,0.18); color: #f87171; border: 1px solid #dc2626; }
-        .grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 20px; }
-        @media (max-width: 920px) { .grid { grid-template-columns: 1fr; } }
-        .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
-        .card h2 { margin-top: 0; font-size: 1.05rem; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
-        table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-        th, td { text-align: left; padding: 11px 8px; border-bottom: 1px solid var(--border); }
-        th { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; }
-        input[type="number"], input[type="text"], select { background: #0f172a; border: 1px solid var(--border); color: var(--text); padding: 9px 11px; border-radius: 8px; width: 100%; }
-        input[type="number"] { width: 74px; text-align: center; font-weight: 600; }
-        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-        .form-row-3 { display: grid; grid-template-columns: 0.9fr 1.3fr 0.8fr; gap: 10px; align-items: end; margin-bottom: 12px; }
-        label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 5px; }
-        .preset-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-        .preset-pill { background: #0f172a; border: 1px solid var(--border); color: #cbd5e1; padding: 5px 10px; border-radius: 6px; font-size: 0.78rem; cursor: pointer; }
-        .preset-pill:hover { border-color: var(--primary); color: #fff; }
-        .voucher-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0 14px; }
-        .voucher-btn { background: #0f172a; border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 10px; text-align: left; cursor: pointer; transition: 0.15s; display: flex; flex-direction: column; gap: 3px; }
-        .voucher-btn:hover:not(:disabled) { border-color: var(--primary); background: #172554; }
-        .voucher-btn.selected { border-color: #34d399; background: rgba(16,185,129,0.12); }
-        .voucher-btn:disabled { opacity: 0.45; cursor: not-allowed; background: #090d16; border-style: dashed; }
-        .voucher-btn .v-code { font-weight: 700; font-size: 0.92rem; color: #38bdf8; }
-        .voucher-btn:disabled .v-code { color: #64748b; }
-        .voucher-btn .v-desc { font-size: 0.77rem; color: #cbd5e1; }
-        .voucher-btn .v-date { font-size: 0.72rem; color: #94a3b8; }
-        .voucher-btn .v-status { font-size: 0.74rem; font-weight: 600; margin-top: 3px; }
-        .btn-group { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
-        button.action-btn { border: none; padding: 10px 14px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.88rem; flex: 1; }
-        .btn-primary { background: var(--primary); color: white; }
-        .btn-success { background: var(--success); color: #052e16; }
-        .btn-warn { background: var(--warn); color: #451a03; width: 100%; }
-        .btn-secondary { background: #334155; color: #f8fafc; padding: 9px 12px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.82rem; }
-        .summary-box { background: #0f172a; border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-top: 14px; }
-        .summary-line { display: flex; justify-content: space-between; margin: 6px 0; font-size: 0.95rem; }
-        .summary-total { border-top: 1px dashed var(--border); padding-top: 8px; font-weight: 700; font-size: 1.12rem; color: #38bdf8; }
-        .alert { padding: 12px 14px; border-radius: 8px; margin-top: 14px; font-size: 0.88rem; }
-        .alert-ok { background: rgba(16,185,129,0.15); border: 1px solid #059669; color: #6ee7b7; }
-        .alert-err { background: rgba(239,68,68,0.15); border: 1px solid #dc2626; color: #fca5a5; }
-        details { margin-top: 12px; background: #020617; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
-        summary { cursor: pointer; font-size: 0.8rem; color: var(--muted); font-weight: 600; }
-        pre { margin: 10px 0 0; overflow-x: auto; font-size: 0.78rem; color: #a5f3fc; }
+        :root {
+            --bg-page: #f4f6f9;
+            --bg-surface: #ffffff;
+            --bg-subtle: #f8fafc;
+            --border-color: #e2e8f0;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-muted: #64748b;
+            --accent: #2563eb;
+            --accent-hover: #1d4ed8;
+            --accent-soft: #eff6ff;
+            --success-bg: #f0fdf4;
+            --success-border: #bbf7d0;
+            --success-text: #166534;
+            --error-bg: #fef2f2;
+            --error-border: #fecaca;
+            --error-text: #991b1b;
+            --warn-bg: #fffbeb;
+            --warn-border: #fde68a;
+            --warn-text: #92400e;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-page);
+            color: var(--text-primary);
+            line-height: 1.5;
+        }
+        .topbar { background-color: var(--bg-surface); border-bottom: 1px solid var(--border-color); }
+        .topbar-inner {
+            max-width: 1120px; margin: 0 auto; padding: 16px 24px;
+            display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+        }
+        .brand { font-size: 20px; font-weight: 700; color: var(--text-primary); text-decoration: none; letter-spacing: -0.02em; }
+        .brand span { color: var(--accent); }
+        .nav-links { display: flex; align-items: center; gap: 24px; font-size: 14px; }
+        .nav-links a { color: var(--text-secondary); text-decoration: none; font-weight: 500; }
+        .nav-links a:hover, .nav-links a.active { color: var(--accent); }
+        .container { max-width: 1120px; margin: 0 auto; padding: 28px 24px 48px; }
+        .page-head { margin-bottom: 24px; }
+        .page-head h1 { margin: 0 0 4px; font-size: 24px; font-weight: 700; }
+        .page-head p { margin: 0; font-size: 14px; color: var(--text-muted); }
+        .alert { padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-bottom: 20px; border: 1px solid transparent; }
+        .alert-success { background-color: var(--success-bg); border-color: var(--success-border); color: var(--success-text); }
+        .alert-error { background-color: var(--error-bg); border-color: var(--error-border); color: var(--error-text); }
+        .alert-warn { background-color: var(--warn-bg); border-color: var(--warn-border); color: var(--warn-text); }
+        .checkout-grid { display: grid; grid-template-columns: 1.55fr 1fr; gap: 24px; align-items: start; }
+        @media (max-width: 900px) { .checkout-grid { grid-template-columns: 1fr; } }
+        .panel { background-color: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 10px; padding: 20px 24px; margin-bottom: 20px; }
+        .panel:last-child { margin-bottom: 0; }
+        .panel-title { margin: 0 0 16px; font-size: 16px; font-weight: 600; }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+        @media (max-width: 640px) { .form-row { grid-template-columns: 1fr; } }
+        .field label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
+        .field input[type="text"], .field input[type="number"] {
+            width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px;
+            font-size: 14px; color: var(--text-primary); background-color: var(--bg-surface);
+        }
+        .field input:focus { outline: none; border-color: var(--accent); }
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center; padding: 10px 16px;
+            border-radius: 8px; font-size: 14px; font-weight: 600; border: 1px solid transparent;
+            cursor: pointer; text-decoration: none; transition: background-color 0.15s ease;
+        }
+        .btn-primary { background-color: var(--accent); color: #ffffff; }
+        .btn-primary:hover { background-color: var(--accent-hover); }
+        .btn-secondary { background-color: var(--bg-surface); color: var(--text-primary); border-color: var(--border-color); }
+        .btn-secondary:hover { background-color: var(--bg-subtle); }
+        .btn-sm { padding: 6px 12px; font-size: 13px; }
+        .btn-block { width: 100%; padding: 12px 18px; font-size: 15px; }
+        .cart-table { width: 100%; border-collapse: collapse; }
+        .cart-table th {
+            text-align: left; font-size: 12px; font-weight: 600; color: var(--text-muted);
+            text-transform: uppercase; letter-spacing: 0.03em; padding: 0 0 10px; border-bottom: 1px solid var(--border-color);
+        }
+        .cart-table td { padding: 14px 4px; border-bottom: 1px solid var(--border-color); font-size: 14px; vertical-align: middle; }
+        .cart-table tr:last-child td { border-bottom: none; }
+        .qty-form { display: inline-flex; align-items: center; gap: 6px; }
+        .qty-input { width: 64px; padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px; text-align: center; }
+        .voucher-apply-box { display: flex; gap: 10px; margin-bottom: 16px; }
+        .voucher-apply-box input { flex: 1; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; text-transform: uppercase; }
+        .voucher-list { display: grid; gap: 10px; }
+        .voucher-item {
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            padding: 12px 14px; border: 1px solid var(--border-color); border-radius: 8px; background-color: var(--bg-subtle);
+        }
+        .voucher-item.is-selected { border-color: var(--accent); background-color: var(--accent-soft); }
+        .voucher-code { font-weight: 700; font-size: 14px; color: var(--text-primary); }
+        .voucher-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+        .voucher-state { font-size: 12px; font-weight: 600; color: var(--accent); margin-top: 4px; }
+        .voucher-state.unavailable { color: var(--text-muted); font-weight: 500; }
+        .summary-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; font-size: 14px; color: var(--text-secondary); }
+        .summary-row.discount span:last-child { color: var(--success-text); font-weight: 600; }
+        .summary-total {
+            display: flex; justify-content: space-between; align-items: baseline; padding: 14px 0 18px;
+            margin-top: 8px; border-top: 1px solid var(--border-color); font-size: 16px; font-weight: 700;
+        }
+        .summary-total .total-amount { font-size: 20px; color: var(--accent); }
+        .promo-banner { margin-top: 20px; padding: 18px 20px; border-radius: 10px; background-color: var(--accent-soft); border: 1px solid #bfdbfe; }
+        .promo-banner h3 { margin: 0 0 6px; font-size: 15px; font-weight: 700; }
+        .promo-banner p { margin: 0; font-size: 13px; color: var(--text-secondary); }
+        .receipt-box { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--border-color); font-size: 13px; }
+        .receipt-row { display: flex; justify-content: space-between; margin-bottom: 6px; color: var(--text-secondary); }
+        .actions-inline { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
     </style>
 </head>
 <body>
-<div class="container">
-    <div class="navbar">
-        <div>
-            <strong style="font-size:1.15rem;">KodePromo Store</strong>
-            <div style="font-size:0.78rem; color:var(--muted);">Simulasi E-Commerce Customer Checkout</div>
+    <header class="topbar">
+        <div class="topbar-inner">
+            <a href="index.php" class="brand">Kode<span>Promo</span></a>
+            <nav class="nav-links">
+                <a href="index.php" class="active">Checkout</a>
+                <a href="#keranjang">Keranjang</a>
+                <a href="#voucher">Voucher</a>
+                <a href="monitor.php">Admin</a>
+            </nav>
         </div>
-        <div class="nav-links">
-            <a href="index.php" class="nav-tab active">Halaman Customer (Checkout)</a>
-            <a href="monitor.php" class="nav-tab">Portal Admin (CRUD & Laporan)</a>
+    </header>
+
+    <main class="container">
+        <div class="page-head">
+            <h1>Checkout</h1>
+            <p>Masukkan informasi akun Anda, periksa keranjang belanja, dan gunakan voucher yang tersedia.</p>
         </div>
-        <div>
-            <?php if (($healthCheck['body']['status'] ?? '') === 'ok'): ?>
-                <span class="badge badge-ok">API Connected</span>
-            <?php else: ?>
-                <span class="badge badge-err">API Disconnected</span>
-            <?php endif; ?>
-        </div>
-    </div>
 
-    <form method="POST" class="grid" id="checkoutForm">
-        <div>
-            <div class="card">
-                <h2>1. Identitas Akun Customer (Deteksi Batas 1x Pakai)</h2>
-                <div class="preset-bar">
-                    <span style="font-size:0.78rem; color:var(--muted); align-self:center;">Akun Cepat:</span>
-                    <?php foreach ($presetCustomers as $pId => $pName): ?>
-                        <button type="button" class="preset-pill" onclick="setCustomer('<?= $pId ?>', '<?= htmlspecialchars($pName) ?>')">
-                            <?= $pId ?> (<?= htmlspecialchars($pName) ?>)
-                        </button>
-                    <?php endforeach; ?>
-                </div>
-                <div class="form-row-3">
-                    <div>
-                        <label>ID Akun Customer</label>
-                        <input type="text" id="customer_id" name="customer_id" value="<?= htmlspecialchars($customerId) ?>" required>
-                    </div>
-                    <div>
-                        <label>Nama Customer</label>
-                        <input type="text" id="customer_name" name="customer_name" value="<?= htmlspecialchars($customerName) ?>" required>
-                    </div>
-                    <div>
-                        <button type="submit" name="action" value="switch_customer" class="btn-secondary" style="width:100%;">Muat Status Akun</button>
-                    </div>
-                </div>
-                <div style="font-size:0.8rem; color:var(--muted);">
-                    Identitas dikirim ke API: <strong style="color:#38bdf8;"><?= htmlspecialchars($userIdentifier) ?></strong>
-                    (Sudah menukarkan <strong><?= count($userRedemptions) ?></strong> voucher)
-                </div>
-            </div>
+        <?php if ($flashSuccess): ?>
+            <div class="alert alert-success"><?= htmlspecialchars($flashSuccess) ?></div>
+        <?php endif; ?>
 
-            <div class="card">
-                <h2>2. Keranjang Belanja</h2>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Produk</th>
-                            <th>Harga Satuan</th>
-                            <th>Qty</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    <?php foreach ($products as $id => $item): ?>
-                        <tr>
-                            <td>
-                                <strong><?= htmlspecialchars($item['name']) ?></strong><br>
-                                <small style="color:var(--muted)"><?= htmlspecialchars($item['tag']) ?></small>
-                            </td>
-                            <td><?= rupiah($item['price']) ?></td>
-                            <td>
-                                <input
-                                    type="number"
-                                    class="qty-input"
-                                    data-price="<?= (int) $item['price'] ?>"
-                                    name="qty[<?= $id ?>]"
-                                    min="0"
-                                    max="20"
-                                    value="<?= (int) $selectedQuantities[$id] ?>"
-                                >
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
+        <?php if ($flashError): ?>
+            <div class="alert alert-error"><?= htmlspecialchars($flashError) ?></div>
+        <?php endif; ?>
 
-                <div class="summary-box">
-                    <div class="summary-line">
-                        <span>Subtotal Belanja Saat Ini:</span>
-                        <strong id="liveSubtotalText"><?= rupiah($orderAmount) ?></strong>
-                    </div>
-                    <?php
-                    $calc = $apiResult['body']['data']['calculation'] ?? $apiResult['body']['data'] ?? null;
-                    if (is_array($calc) && isset($calc['discount_amount'])):
-                    ?>
-                        <div class="summary-line" style="color:#34d399;">
-                            <span>Potongan Voucher (<?= htmlspecialchars($voucherCode) ?>):</span>
-                            <strong>- <?= rupiah($calc['discount_amount']) ?></strong>
+        <?php if ($voucherNotice): ?>
+            <div class="alert alert-warn"><?= htmlspecialchars($voucherNotice) ?></div>
+        <?php endif; ?>
+
+        <div class="checkout-grid">
+            <div>
+                <section class="panel" id="akun">
+                    <h2 class="panel-title">Informasi Akun</h2>
+                    <form method="post">
+                        <input type="hidden" name="action" value="update_customer">
+                        <div class="form-row">
+                            <div class="field">
+                                <label for="customer_id_account">ID Akun Customer</label>
+                                <input type="text" id="customer_id_account" name="customer_id" value="<?= htmlspecialchars($customerId) ?>" placeholder="Contoh: CUST-101" required>
+                            </div>
+                            <div class="field">
+                                <label for="customer_name_account">Nama Lengkap</label>
+                                <input type="text" id="customer_name_account" name="customer_name" value="<?= htmlspecialchars($customerName) ?>" placeholder="Masukkan nama Anda">
+                            </div>
                         </div>
-                        <div class="summary-line summary-total">
-                            <span>Total Akhir Bayar:</span>
-                            <span><?= rupiah($calc['final_amount']) ?></span>
+                        <button type="submit" class="btn btn-secondary btn-sm">Simpan Informasi Akun</button>
+                    </form>
+                </section>
+
+                <section class="panel" id="keranjang">
+                    <h2 class="panel-title">Keranjang Belanja</h2>
+                    <table class="cart-table">
+                        <thead>
+                            <tr>
+                                <th>Produk</th>
+                                <th>Harga</th>
+                                <th>Jumlah</th>
+                                <th>Subtotal</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($_SESSION['cart'] as $item): ?>
+                                <?php
+                                $sku = (string) ($item['sku'] ?? '');
+                                $name = (string) ($item['name'] ?? '');
+                                $price = (float) ($item['price'] ?? 0);
+                                $qty = (int) ($item['qty'] ?? 1);
+                                $lineTotal = $price * $qty;
+                                ?>
+                                <tr>
+                                    <td><strong><?= htmlspecialchars($name) ?></strong></td>
+                                    <td><?= rupiah($price) ?></td>
+                                    <td>
+                                        <form method="post" class="qty-form">
+                                            <input type="hidden" name="action" value="update_qty">
+                                            <input type="hidden" name="sku" value="<?= htmlspecialchars($sku) ?>">
+                                            <input type="number" name="qty" value="<?= $qty ?>" min="1" max="20" class="qty-input" aria-label="Jumlah <?= htmlspecialchars($name) ?>">
+                                            <button type="submit" class="btn btn-secondary btn-sm">Ubah</button>
+                                        </form>
+                                    </td>
+                                    <td><strong><?= rupiah($lineTotal) ?></strong></td>
+                                    <td>
+                                        <?php if (count($_SESSION['cart']) > 1): ?>
+                                            <form method="post" style="display:inline;">
+                                                <input type="hidden" name="action" value="remove_item">
+                                                <input type="hidden" name="sku" value="<?= htmlspecialchars($sku) ?>">
+                                                <button type="submit" class="btn btn-secondary btn-sm">Hapus</button>
+                                            </form>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+
+                    <div class="actions-inline">
+                        <span class="voucher-meta">Total item: <?= array_sum(array_map(fn($i) => (int) ($i['qty'] ?? 0), $_SESSION['cart'])) ?> barang</span>
+                        <form method="post" style="display:inline;">
+                            <input type="hidden" name="action" value="reset_cart">
+                            <button type="submit" class="btn btn-secondary btn-sm">Reset Keranjang</button>
+                        </form>
+                    </div>
+                </section>
+
+                <section class="panel" id="voucher">
+                    <h2 class="panel-title">Kode Voucher</h2>
+
+                    <form method="post" class="voucher-apply-box">
+                        <input type="hidden" name="action" value="apply_voucher">
+                        <input type="hidden" name="customer_id" value="<?= htmlspecialchars($customerId) ?>">
+                        <input type="hidden" name="customer_name" value="<?= htmlspecialchars($customerName) ?>">
+                        <input type="text" name="voucher_code" value="<?= htmlspecialchars($appliedVoucherCode) ?>" placeholder="Masukkan kode voucher" aria-label="Kode voucher">
+                        <button type="submit" class="btn btn-primary">Gunakan</button>
+                        <?php if ($appliedVoucherCode !== ''): ?>
+                            <button type="submit" name="action" value="clear_voucher" class="btn btn-secondary">Lepas</button>
+                        <?php endif; ?>
+                    </form>
+
+                    <?php if (!empty($vouchersList)): ?>
+                        <div class="voucher-list">
+                            <?php foreach ($vouchersList as $v): ?>
+                                <?php
+                                $vCode = strtoupper((string) ($v['code'] ?? ''));
+                                if ($vCode === '') {
+                                    continue;
+                                }
+                                $vType = strtolower((string) ($v['discount_type'] ?? 'fixed'));
+                                $vVal = (float) ($v['discount_value'] ?? 0);
+                                $vMax = isset($v['max_discount']) && $v['max_discount'] !== null ? (float) $v['max_discount'] : null;
+                                $vMin = (float) ($v['min_order_amount'] ?? ($v['min_purchase'] ?? 0));
+                                $vStatus = strtolower((string) ($v['status'] ?? 'active'));
+                                $vQuota = isset($v['quota_total']) ? (int) $v['quota_total'] : (isset($v['quota']) ? (int) $v['quota'] : null);
+                                $vUsed = (int) ($v['quota_used'] ?? ($v['used_count'] ?? ($v['redeemed_count'] ?? 0)));
+
+                                $discLabel = ($vType === 'percent' || $vType === 'percentage')
+                                    ? rtrim(rtrim(number_format($vVal, 2, '.', ''), '0'), '.') . '%' . ($vMax ? ' (maks ' . rupiah($vMax) . ')' : '')
+                                    : rupiah($vVal);
+
+                                $isSelected = ($appliedVoucherCode === $vCode);
+                                $reasonText = 'Tersedia';
+                                $canPick = true;
+
+                                if ($vStatus !== 'active' && $vStatus !== 'aktif') {
+                                    $reasonText = 'Tidak aktif';
+                                    $canPick = false;
+                                } elseif ($vQuota !== null && $vUsed >= $vQuota) {
+                                    $reasonText = 'Kuota habis';
+                                    $canPick = false;
+                                } elseif ($vMin > 0 && $subtotal < $vMin) {
+                                    $reasonText = 'Min. belanja ' . rupiah($vMin);
+                                    $canPick = false;
+                                }
+                                ?>
+                                <div class="voucher-item <?= $isSelected ? 'is-selected' : '' ?>">
+                                    <div>
+                                        <div class="voucher-code"><?= htmlspecialchars($vCode) ?></div>
+                                        <div class="voucher-meta">
+                                            Potongan <?= htmlspecialchars($discLabel) ?>
+                                            <?php if ($vMin > 0): ?>
+                                                &middot; Min. belanja <?= rupiah($vMin) ?>
+                                            <?php endif; ?>
+                                        </div>
+                                        <div class="voucher-state <?= $canPick ? '' : 'unavailable' ?>">
+                                            <?= $isSelected ? 'Sedang digunakan' : htmlspecialchars($reasonText) ?>
+                                        </div>
+                                    </div>
+
+                                    <form method="post" style="margin:0;">
+                                        <input type="hidden" name="action" value="apply_voucher">
+                                        <input type="hidden" name="customer_id" value="<?= htmlspecialchars($customerId) ?>">
+                                        <input type="hidden" name="customer_name" value="<?= htmlspecialchars($customerName) ?>">
+                                        <input type="hidden" name="voucher_code" value="<?= htmlspecialchars($vCode) ?>">
+                                        <button type="submit" class="btn <?= $isSelected ? 'btn-primary' : 'btn-secondary' ?> btn-sm" <?= $canPick ? '' : 'disabled' ?>>
+                                            <?= $isSelected ? 'Dipakai' : 'Pakai' ?>
+                                        </button>
+                                    </form>
+                                </div>
+                            <?php endforeach; ?>
                         </div>
                     <?php endif; ?>
-                </div>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>3. Pilih Promo & Pembayaran (Maks. 1 Voucher / Order)</h2>
-
-            <div style="margin-bottom:12px;">
-                <label>Order ID Transaksi (BR-08 & Larangan Gabung Voucher)</label>
-                <input type="text" name="order_id" value="<?= htmlspecialchars($orderId) ?>" required>
-            </div>
-
-            <label>Daftar Voucher (Otomatis Terkunci Jika Sudah Dipakai 1x, Expired, Kuota Habis, atau Kurang Min. Belanja)</label>
-            <div class="voucher-grid" id="voucherGrid">
-                <?php
-                $nowTs = time();
-                foreach ($availableVouchers as $v):
-                    $code = strtoupper((string) $v['code']);
-                    $minOrder = (float) $v['min_order_amount'];
-                    $maxPerUser = (int) ($v['max_uses_per_user'] ?? 1);
-                    $usedByThisUser = (int) ($usedVoucherCounts[$code] ?? 0);
-                    $startsAt = $v['campaign']['starts_at'] ?? null;
-                    $endsAt = $v['campaign']['ends_at'] ?? null;
-
-                    $discLabel = $v['discount_type'] === 'percentage'
-                        ? ('Diskon ' . $v['discount_value'] . '%' . ($v['max_discount'] ? ' (maks ' . rupiah($v['max_discount']) . ')' : ''))
-                        : ('Potongan ' . rupiah($v['discount_value']));
-
-                    $hardLockReason = '';
-                    if ($usedByThisUser >= $maxPerUser) {
-                        $hardLockReason = "Sudah Dipakai oleh {$customerId} (Batas {$maxPerUser}x/Akun)";
-                    } elseif (empty($v['is_active']) || empty($v['campaign']['is_active'])) {
-                        $hardLockReason = 'Voucher / Kampanye Nonaktif';
-                    } elseif ($startsAt && strtotime($startsAt) > $nowTs) {
-                        $hardLockReason = 'Belum Mulai (' . date('d M Y', strtotime($startsAt)) . ')';
-                    } elseif ($endsAt && strtotime($endsAt) < $nowTs) {
-                        $hardLockReason = 'Kadaluarsa / Expired';
-                    } elseif ($v['quota_total'] !== null && (int) $v['quota_used'] >= (int) $v['quota_total']) {
-                        $hardLockReason = 'Kuota Voucher Habis';
-                    }
-
-                    $isEligible = ($hardLockReason === '' && $orderAmount >= $minOrder);
-                    $isSelected = ($voucherCode === $code && $isEligible);
-                ?>
-                    <button
-                        type="button"
-                        class="voucher-btn <?= $isSelected ? 'selected' : '' ?>"
-                        data-code="<?= htmlspecialchars($code) ?>"
-                        data-min-order="<?= $minOrder ?>"
-                        data-hard-lock="<?= htmlspecialchars($hardLockReason) ?>"
-                        <?= $isEligible ? '' : 'disabled' ?>
-                    >
-                        <span class="v-code"><?= htmlspecialchars($code) ?></span>
-                        <span class="v-desc"><?= htmlspecialchars($discLabel) ?></span>
-                        <span class="v-desc">Min. belanja: <?= rupiah($minOrder) ?> | Kuota: <?= (int) $v['quota_used'] ?>/<?= $v['quota_total'] ?? '∞' ?></span>
-                        <?php if ($startsAt && $endsAt): ?>
-                            <span class="v-date">Berlaku: <?= date('d M Y', strtotime($startsAt)) ?> — <?= date('d M Y', strtotime($endsAt)) ?></span>
-                        <?php endif; ?>
-                        <span class="v-status" style="color: <?= $isEligible ? '#34d399' : '#f87171' ?>;">
-                            <?php if ($hardLockReason !== ''): ?>
-                                Terkunci — <?= htmlspecialchars($hardLockReason) ?>
-                            <?php elseif ($orderAmount < $minOrder): ?>
-                                Terkunci — Kurang <?= rupiah($minOrder - $orderAmount) ?>
-                            <?php else: ?>
-                                Memenuhi syarat (Klik untuk pilih)
-                            <?php endif; ?>
-                        </span>
-                    </button>
-                <?php endforeach; ?>
+                </section>
             </div>
 
             <div>
-                <label>Kode Voucher Terpilih (atau Ketik Manual untuk Menguji Validasi Error API)</label>
-                <input type="text" id="voucher_code" name="voucher_code" value="<?= htmlspecialchars($voucherCode) ?>" placeholder="Pilih voucher di atas atau ketik kode...">
-            </div>
+                <section class="panel">
+                    <h2 class="panel-title">Ringkasan Pembayaran</h2>
 
-            <div class="btn-group">
-                <button type="submit" name="action" value="validate" class="action-btn btn-primary">Cek / Validasi Voucher</button>
-                <button type="submit" name="action" value="redeem" class="action-btn btn-success">Checkout & Redeem</button>
-            </div>
+                    <div class="summary-row">
+                        <span>Akun Customer</span>
+                        <strong><?= htmlspecialchars($customerId !== '' ? ($customerName !== '' ? $customerName . ' (' . $customerId . ')' : $customerId) : 'Belum diisi') ?></strong>
+                    </div>
 
-            <?php if (!empty($_SESSION['last_redeem'])): ?>
-                <div class="btn-group" style="margin-top:10px;">
-                    <button type="submit" name="action" value="retry_idempotent" class="action-btn btn-warn">Simulasi Retry (Idempotency-Key Sama — BR-08)</button>
-                </div>
-            <?php endif; ?>
+                    <div class="summary-row">
+                        <span>Subtotal Belanja</span>
+                        <span><?= rupiah($subtotal) ?></span>
+                    </div>
 
-            <?php if ($apiResult !== null): ?>
-                <?php $isSuccess = ($apiResult['body']['status'] ?? '') === 'success'; ?>
-                <div class="alert <?= $isSuccess ? 'alert-ok' : 'alert-err' ?>">
-                    <strong>HTTP <?= $apiResult['http_code'] ?></strong> — <?= htmlspecialchars($apiResult['body']['message'] ?? 'Respons diterima') ?>
-                    <?php if (!empty($apiResult['body']['idempotent_replay'])): ?>
-                        <br><small><strong>[BR-08 Idempotent Replay]</strong> Kuota tidak terpotong dua kali.</small>
+                    <div class="summary-row discount">
+                        <span>Diskon Voucher<?= $appliedVoucherCode !== '' ? ' (' . htmlspecialchars($appliedVoucherCode) . ')' : '' ?></span>
+                        <span><?= $estimatedDiscount > 0 ? '- ' . rupiah($estimatedDiscount) : rupiah(0) ?></span>
+                    </div>
+
+                    <div class="summary-total">
+                        <span>Total Pembayaran</span>
+                        <span class="total-amount"><?= rupiah($estimatedTotal) ?></span>
+                    </div>
+
+                    <form method="post">
+                        <input type="hidden" name="action" value="checkout_redeem">
+                        <input type="hidden" name="customer_id" value="<?= htmlspecialchars($customerId) ?>">
+                        <input type="hidden" name="customer_name" value="<?= htmlspecialchars($customerName) ?>">
+                        <input type="hidden" name="voucher_code" value="<?= htmlspecialchars($appliedVoucherCode) ?>">
+                        <button type="submit" class="btn btn-primary btn-block">Bayar Sekarang</button>
+                    </form>
+
+                    <?php if (is_array($lastOrder)): ?>
+                        <div class="receipt-box">
+                            <div class="receipt-row">
+                                <span>No. Pesanan</span>
+                                <strong><?= htmlspecialchars((string) ($lastOrder['order_ref'] ?? '-')) ?></strong>
+                            </div>
+                            <div class="receipt-row">
+                                <span>Customer</span>
+                                <span><?= htmlspecialchars((string) ($lastOrder['customer_id'] ?? '-')) ?></span>
+                            </div>
+                            <?php if (!empty($lastOrder['voucher_code'])): ?>
+                                <div class="receipt-row">
+                                    <span>Voucher</span>
+                                    <span><?= htmlspecialchars((string) $lastOrder['voucher_code']) ?></span>
+                                </div>
+                            <?php endif; ?>
+                            <div class="receipt-row">
+                                <span>Total Dibayar</span>
+                                <strong><?= rupiah((float) ($lastOrder['total'] ?? 0)) ?></strong>
+                            </div>
+                            <div class="receipt-row">
+                                <span>Waktu</span>
+                                <span><?= htmlspecialchars((string) ($lastOrder['paid_at'] ?? '-')) ?></span>
+                            </div>
+                        </div>
                     <?php endif; ?>
+                </section>
+
+                <div class="promo-banner">
+                    <h3>Gunakan Voucher untuk Hemat Lebih!</h3>
+                    <p>Pilih kode voucher yang sesuai dengan minimal belanja Anda sebelum menyelesaikan pembayaran.</p>
                 </div>
-                <details open>
-                    <summary>Lihat Payload Respons JSON API (<?= htmlspecialchars((string) $lastEndpoint) ?>)</summary>
-                    <pre><?= htmlspecialchars(json_encode($apiResult['body'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) ?></pre>
-                </details>
-            <?php endif; ?>
+            </div>
         </div>
-    </form>
-</div>
-
-<script>
-function setCustomer(id, name) {
-    document.getElementById('customer_id').value = id;
-    document.getElementById('customer_name').value = name;
-    const form = document.getElementById('checkoutForm');
-    const hidden = document.createElement('input');
-    hidden.type = 'hidden';
-    hidden.name = 'action';
-    hidden.value = 'switch_customer';
-    form.appendChild(hidden);
-    form.submit();
-}
-
-(function () {
-    const qtyInputs = document.querySelectorAll('.qty-input');
-    const subtotalEl = document.getElementById('liveSubtotalText');
-    const voucherBtns = document.querySelectorAll('.voucher-btn');
-    const voucherInput = document.getElementById('voucher_code');
-
-    function formatRupiah(angka) {
-        return 'Rp ' + Math.round(angka).toLocaleString('id-ID');
-    }
-
-    function updateCartAndVouchers() {
-        let subtotal = 0;
-        qtyInputs.forEach(input => {
-            const qty = Math.max(0, parseInt(input.value || '0', 10));
-            const price = parseFloat(input.dataset.price || '0');
-            subtotal += qty * price;
-        });
-
-        subtotalEl.textContent = formatRupiah(subtotal);
-
-        voucherBtns.forEach(btn => {
-            const minOrder = parseFloat(btn.dataset.minOrder || '0');
-            const hardLock = btn.dataset.hardLock || '';
-            const code = btn.dataset.code;
-            const statusEl = btn.querySelector('.v-status');
-
-            if (hardLock !== '') {
-                btn.disabled = true;
-                btn.classList.remove('selected');
-                statusEl.textContent = 'Terkunci — ' + hardLock;
-                statusEl.style.color = '#f87171';
-                return;
-            }
-
-            if (subtotal >= minOrder) {
-                btn.disabled = false;
-                statusEl.textContent = 'Memenuhi syarat (Klik untuk pilih)';
-                statusEl.style.color = '#34d399';
-            } else {
-                btn.disabled = true;
-                btn.classList.remove('selected');
-                statusEl.textContent = 'Terkunci — Kurang ' + formatRupiah(minOrder - subtotal);
-                statusEl.style.color = '#f87171';
-
-                if (voucherInput.value.toUpperCase() === code) {
-                    voucherInput.value = '';
-                }
-            }
-        });
-    }
-
-    voucherBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            if (btn.disabled) return;
-            voucherBtns.forEach(b => b.classList.remove('selected'));
-            btn.classList.add('selected');
-            voucherInput.value = btn.dataset.code;
-        });
-    });
-
-    qtyInputs.forEach(input => {
-        input.addEventListener('input', updateCartAndVouchers);
-        input.addEventListener('change', updateCartAndVouchers);
-    });
-
-    updateCartAndVouchers();
-})();
-</script>
+    </main>
 </body>
 </html>
