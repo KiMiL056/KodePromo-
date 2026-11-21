@@ -71,9 +71,17 @@ function parseWibDateTime(?string $dateStr): ?DateTimeImmutable
         return null;
     }
     $wib = new DateTimeZone('Asia/Jakarta');
-    $clean = str_replace('T', ' ', trim($dateStr));
+    $trimmed = trim($dateStr);
+
+    // Jika input dari <input type="datetime-local"> (tanpa timezone), anggap langsung WIB (+07:00)
+    if (preg_match('/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?$/', $trimmed)) {
+        $dt = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', str_replace('T', ' ', $trimmed) . (strlen($trimmed) <= 16 ? ':00' : ''), $wib);
+        return $dt ? $dt->setTimezone($wib) : null;
+    }
+
+    // Jika string dari API sudah memiliki timezone/ISO (Z atau +07:00), parse lalu paksa ke WIB
     try {
-        return (new DateTimeImmutable($clean, $wib))->setTimezone($wib);
+        return (new DateTimeImmutable($trimmed))->setTimezone($wib);
     } catch (Throwable $e) {
         return null;
     }
@@ -82,7 +90,7 @@ function parseWibDateTime(?string $dateStr): ?DateTimeImmutable
 function toIsoWib(string $datetimeLocal): string
 {
     $dt = parseWibDateTime($datetimeLocal) ?? new DateTimeImmutable('now', new DateTimeZone('Asia/Jakarta'));
-    return $dt->format('Y-m-d H:i:s');
+    return $dt->format('Y-m-d\TH:i:sP');
 }
 
 function toDatetimeLocal(?string $dateStr): string
