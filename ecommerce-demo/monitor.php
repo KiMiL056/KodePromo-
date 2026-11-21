@@ -1,490 +1,731 @@
 <?php
 require_once __DIR__ . '/config.php';
 
-$flashMessage = null;
-$flashType = 'ok';
+$flashSuccess = null;
+$flashError = null;
+$activeTab = $_GET['tab'] ?? 'dashboard';
+if (!in_array($activeTab, ['dashboard', 'campaigns', 'vouchers', 'transactions'], true)) {
+    $activeTab = 'dashboard';
+}
 
-// Proses aksi CRUD Kampanye & Voucher dari Portal Admin
+$editCampaign = null;
+$editVoucher = null;
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $crudAction = $_POST['crud_action'] ?? '';
+    $action = $_POST['action'] ?? '';
+    $redirectTab = $_POST['redirect_tab'] ?? $activeTab;
+    if (!in_array($redirectTab, ['dashboard', 'campaigns', 'vouchers', 'transactions'], true)) {
+        $redirectTab = 'dashboard';
+    }
 
-    if ($crudAction === 'create_campaign') {
-        $resp = callKodePromoApi('POST', $apiBaseUrl . '/api/v1/campaigns', $apiKey, [
-            'name' => trim((string) $_POST['name']),
-            'starts_at' => toIsoWib((string) $_POST['starts_at']),
-            'ends_at' => toIsoWib((string) $_POST['ends_at']),
-            'is_active' => isset($_POST['is_active']),
-        ]);
-        $flashType = ($resp['body']['status'] ?? '') === 'success' ? 'ok' : 'err';
-        $flashMessage = $resp['body']['message'] ?? json_encode($resp['body']);
-    } elseif ($crudAction === 'update_campaign') {
-        $id = (int) $_POST['campaign_id'];
-        $resp = callKodePromoApi('PUT', $apiBaseUrl . '/api/v1/campaigns/' . $id, $apiKey, [
-            'name' => trim((string) $_POST['name']),
-            'starts_at' => toIsoWib((string) $_POST['starts_at']),
-            'ends_at' => toIsoWib((string) $_POST['ends_at']),
-            'is_active' => isset($_POST['is_active']),
-        ]);
-        $flashType = ($resp['body']['status'] ?? '') === 'success' ? 'ok' : 'err';
-        $flashMessage = $resp['body']['message'] ?? json_encode($resp['body']);
-    } elseif ($crudAction === 'delete_campaign') {
-        $id = (int) $_POST['campaign_id'];
-        $resp = callKodePromoApi('DELETE', $apiBaseUrl . '/api/v1/campaigns/' . $id, $apiKey);
-        $flashType = ($resp['body']['status'] ?? '') === 'success' ? 'ok' : 'err';
-        $flashMessage = $resp['body']['message'] ?? json_encode($resp['body']);
-    } elseif ($crudAction === 'create_voucher') {
-        $discountType = (string) $_POST['discount_type'];
-        $maxDisc = $_POST['max_discount'] !== '' ? (float) $_POST['max_discount'] : null;
-        $quotaTotal = $_POST['quota_total'] !== '' ? (int) $_POST['quota_total'] : null;
+    if ($action === 'create_campaign') {
+        $payload = [
+            'name' => trim((string) ($_POST['name'] ?? '')),
+            'description' => trim((string) ($_POST['description'] ?? '')),
+            'starts_at' => toIsoWib((string) ($_POST['starts_at'] ?? '')),
+            'ends_at' => toIsoWib((string) ($_POST['ends_at'] ?? '')),
+            'status' => trim((string) ($_POST['status'] ?? 'active')),
+        ];
+        $res = callKodePromoApi('POST', $apiBaseUrl . '/api/v1/campaigns', $apiKey, $payload);
+        if ($res['http_code'] >= 200 && $res['http_code'] < 300) {
+            $flashSuccess = 'Kampanye baru berhasil ditambahkan.';
+        } else {
+            $flashError = $res['body']['message'] ?? 'Gagal menambahkan kampanye.';
+        }
+    } elseif ($action === 'update_campaign') {
+        $id = (int) ($_POST['id'] ?? 0);
+        $payload = [
+            'name' => trim((string) ($_POST['name'] ?? '')),
+            'description' => trim((string) ($_POST['description'] ?? '')),
+            'starts_at' => toIsoWib((string) ($_POST['starts_at'] ?? '')),
+            'ends_at' => toIsoWib((string) ($_POST['ends_at'] ?? '')),
+            'status' => trim((string) ($_POST['status'] ?? 'active')),
+        ];
+        $res = callKodePromoApi('PUT', $apiBaseUrl . '/api/v1/campaigns/' . $id, $apiKey, $payload);
+        if ($res['http_code'] >= 200 && $res['http_code'] < 300) {
+            $flashSuccess = 'Data kampanye berhasil diperbarui.';
+        } else {
+            $flashError = $res['body']['message'] ?? 'Gagal memperbarui kampanye.';
+        }
+    } elseif ($action === 'delete_campaign') {
+        $id = (int) ($_POST['id'] ?? 0);
+        $res = callKodePromoApi('DELETE', $apiBaseUrl . '/api/v1/campaigns/' . $id, $apiKey);
+        if ($res['http_code'] >= 200 && $res['http_code'] < 300) {
+            $flashSuccess = 'Kampanye berhasil dihapus.';
+        } else {
+            $flashError = $res['body']['message'] ?? 'Gagal menghapus kampanye.';
+        }
+    } elseif ($action === 'create_voucher') {
+        $maxDiscRaw = trim((string) ($_POST['max_discount'] ?? ''));
+        $payload = [
+            'campaign_id' => (int) ($_POST['campaign_id'] ?? 0),
+            'code' => strtoupper(trim((string) ($_POST['code'] ?? ''))),
+            'discount_type' => trim((string) ($_POST['discount_type'] ?? 'percentage')),
+            'discount_value' => (float) ($_POST['discount_value'] ?? 0),
+            'max_discount' => $maxDiscRaw !== '' ? (float) $maxDiscRaw : null,
+            'min_order_amount' => (float) ($_POST['min_order_amount'] ?? 0),
+            'quota' => (int) ($_POST['quota'] ?? 1),
+            'per_user_limit' => (int) ($_POST['per_user_limit'] ?? 1),
+            'starts_at' => toIsoWib((string) ($_POST['starts_at'] ?? '')),
+            'ends_at' => toIsoWib((string) ($_POST['ends_at'] ?? '')),
+            'status' => trim((string) ($_POST['status'] ?? 'active')),
+        ];
+        $res = callKodePromoApi('POST', $apiBaseUrl . '/api/v1/vouchers', $apiKey, $payload);
+        if ($res['http_code'] >= 200 && $res['http_code'] < 300) {
+            $flashSuccess = 'Kode voucher berhasil dibuat.';
+        } else {
+            $flashError = $res['body']['message'] ?? 'Gagal membuat kode voucher.';
+        }
+    } elseif ($action === 'update_voucher') {
+        $id = (int) ($_POST['id'] ?? 0);
+        $maxDiscRaw = trim((string) ($_POST['max_discount'] ?? ''));
+        $payload = [
+            'campaign_id' => (int) ($_POST['campaign_id'] ?? 0),
+            'code' => strtoupper(trim((string) ($_POST['code'] ?? ''))),
+            'discount_type' => trim((string) ($_POST['discount_type'] ?? 'percentage')),
+            'discount_value' => (float) ($_POST['discount_value'] ?? 0),
+            'max_discount' => $maxDiscRaw !== '' ? (float) $maxDiscRaw : null,
+            'min_order_amount' => (float) ($_POST['min_order_amount'] ?? 0),
+            'quota' => (int) ($_POST['quota'] ?? 1),
+            'per_user_limit' => (int) ($_POST['per_user_limit'] ?? 1),
+            'starts_at' => toIsoWib((string) ($_POST['starts_at'] ?? '')),
+            'ends_at' => toIsoWib((string) ($_POST['ends_at'] ?? '')),
+            'status' => trim((string) ($_POST['status'] ?? 'active')),
+        ];
+        $res = callKodePromoApi('PUT', $apiBaseUrl . '/api/v1/vouchers/' . $id, $apiKey, $payload);
+        if ($res['http_code'] >= 200 && $res['http_code'] < 300) {
+            $flashSuccess = 'Data voucher berhasil diperbarui.';
+        } else {
+            $flashError = $res['body']['message'] ?? 'Gagal memperbarui voucher.';
+        }
+    } elseif ($action === 'delete_voucher') {
+        $id = (int) ($_POST['id'] ?? 0);
+        $res = callKodePromoApi('DELETE', $apiBaseUrl . '/api/v1/vouchers/' . $id, $apiKey);
+        if ($res['http_code'] >= 200 && $res['http_code'] < 300) {
+            $flashSuccess = 'Voucher berhasil dihapus.';
+        } else {
+            $flashError = $res['body']['message'] ?? 'Gagal menghapus voucher.';
+        }
+    }
 
-        $resp = callKodePromoApi('POST', $apiBaseUrl . '/api/v1/vouchers', $apiKey, [
-            'campaign_id' => (int) $_POST['campaign_id'],
-            'code' => strtoupper(trim((string) $_POST['code'])),
-            'discount_type' => $discountType,
-            'discount_value' => (float) $_POST['discount_value'],
-            'max_discount' => $discountType === 'percentage' ? $maxDisc : null,
-            'min_order_amount' => (float) ($_POST['min_order_amount'] ?: 0),
-            'quota_total' => $quotaTotal,
-            'max_uses_per_user' => max(1, (int) ($_POST['max_uses_per_user'] ?: 1)),
-            'is_active' => isset($_POST['is_active']),
-        ]);
-        $flashType = ($resp['body']['status'] ?? '') === 'success' ? 'ok' : 'err';
-        $flashMessage = $resp['body']['message'] ?? json_encode($resp['body']);
-    } elseif ($crudAction === 'update_voucher') {
-        $id = (int) $_POST['voucher_id'];
-        $discountType = (string) $_POST['discount_type'];
-        $maxDisc = $_POST['max_discount'] !== '' ? (float) $_POST['max_discount'] : null;
-        $quotaTotal = $_POST['quota_total'] !== '' ? (int) $_POST['quota_total'] : null;
+    $q = '?tab=' . urlencode($redirectTab);
+    if ($flashSuccess) {
+        $q .= '&msg=' . urlencode('ok:' . $flashSuccess);
+    } elseif ($flashError) {
+        $q .= '&msg=' . urlencode('err:' . $flashError);
+    }
+    header('Location: monitor.php' . $q);
+    exit;
+}
 
-        $resp = callKodePromoApi('PUT', $apiBaseUrl . '/api/v1/vouchers/' . $id, $apiKey, [
-            'campaign_id' => (int) $_POST['campaign_id'],
-            'code' => strtoupper(trim((string) $_POST['code'])),
-            'discount_type' => $discountType,
-            'discount_value' => (float) $_POST['discount_value'],
-            'max_discount' => $discountType === 'percentage' ? $maxDisc : null,
-            'min_order_amount' => (float) ($_POST['min_order_amount'] ?: 0),
-            'quota_total' => $quotaTotal,
-            'max_uses_per_user' => max(1, (int) ($_POST['max_uses_per_user'] ?: 1)),
-            'is_active' => isset($_POST['is_active']),
-        ]);
-        $flashType = ($resp['body']['status'] ?? '') === 'success' ? 'ok' : 'err';
-        $flashMessage = $resp['body']['message'] ?? json_encode($resp['body']);
-    } elseif ($crudAction === 'delete_voucher') {
-        $id = (int) $_POST['voucher_id'];
-        $resp = callKodePromoApi('DELETE', $apiBaseUrl . '/api/v1/vouchers/' . $id, $apiKey);
-        $flashType = ($resp['body']['status'] ?? '') === 'success' ? 'ok' : 'err';
-        $flashMessage = $resp['body']['message'] ?? json_encode($resp['body']);
+if (isset($_GET['msg'])) {
+    $rawMsg = (string) $_GET['msg'];
+    if (str_starts_with($rawMsg, 'ok:')) {
+        $flashSuccess = substr($rawMsg, 3);
+    } elseif (str_starts_with($rawMsg, 'err:')) {
+        $flashError = substr($rawMsg, 4);
     }
 }
 
-$healthCheck = callKodePromoApi('GET', $apiBaseUrl . '/health', $apiKey);
-$campaignsList = callKodePromoApi('GET', $apiBaseUrl . '/api/v1/campaigns', $apiKey);
-$vouchersList = callKodePromoApi('GET', $apiBaseUrl . '/api/v1/vouchers', $apiKey);
-$redemptionsList = callKodePromoApi('GET', $apiBaseUrl . '/api/v1/redemptions', $apiKey);
-
-$campaigns = $campaignsList['body']['data'] ?? [];
-$vouchers = $vouchersList['body']['data'] ?? [];
-$redemptions = $redemptionsList['body']['data'] ?? [];
-
-$campaignReportsById = [];
-$totalRedemptions = 0;
-$totalOrderAmount = 0;
-$totalDiscountGiven = 0;
-
-foreach ($campaigns as $camp) {
-    $rep = callKodePromoApi('GET', $apiBaseUrl . '/api/v1/campaigns/' . $camp['id'] . '/report', $apiKey);
-    if (($rep['body']['status'] ?? '') === 'success') {
-        $data = $rep['body']['data'];
-        $campaignReportsById[$camp['id']] = $data;
-        $totalRedemptions += (int) ($data['summary']['total_redemptions'] ?? 0);
-        $totalOrderAmount += (float) ($data['summary']['total_order_amount'] ?? 0);
-        $totalDiscountGiven += (float) ($data['summary']['total_discount_given'] ?? 0);
+$campaigns = [];
+$campMap = [];
+$campRes = callKodePromoApi('GET', $apiBaseUrl . '/api/v1/campaigns', $apiKey);
+if ($campRes['http_code'] >= 200 && $campRes['http_code'] < 300) {
+    $rawC = $campRes['body']['data'] ?? $campRes['body'];
+    if (is_array($rawC)) {
+        foreach ($rawC as $c) {
+            if (is_array($c)) {
+                $campaigns[] = $c;
+                if (isset($c['id'])) {
+                    $campMap[(int) $c['id']] = $c;
+                }
+            }
+        }
     }
 }
 
-// Mode edit jika admin menekan tombol Edit pada tabel
-$editCampaignId = isset($_GET['edit_campaign']) ? (int) $_GET['edit_campaign'] : null;
-$editingCampaign = null;
-foreach ($campaigns as $c) {
-    if ((int) $c['id'] === $editCampaignId) {
-        $editingCampaign = $c;
-        break;
+$vouchers = [];
+$voucherRes = callKodePromoApi('GET', $apiBaseUrl . '/api/v1/vouchers', $apiKey);
+if ($voucherRes['http_code'] >= 200 && $voucherRes['http_code'] < 300) {
+    $rawV = $voucherRes['body']['data'] ?? $voucherRes['body'];
+    if (is_array($rawV)) {
+        foreach ($rawV as $v) {
+            if (is_array($v)) {
+                $vouchers[] = $v;
+            }
+        }
     }
 }
 
-$editVoucherId = isset($_GET['edit_voucher']) ? (int) $_GET['edit_voucher'] : null;
-$editingVoucher = null;
-foreach ($vouchers as $v) {
-    if ((int) $v['id'] === $editVoucherId) {
-        $editingVoucher = $v;
-        break;
+$redemptions = [];
+$redempRes = callKodePromoApi('GET', $apiBaseUrl . '/api/v1/redemptions', $apiKey);
+if ($redempRes['http_code'] >= 200 && $redempRes['http_code'] < 300) {
+    $bodyR = $redempRes['body'];
+    $rawR = $bodyR['data']['data'] ?? ($bodyR['data']['items'] ?? ($bodyR['data']['redemptions'] ?? ($bodyR['data'] ?? ($bodyR['redemptions'] ?? $bodyR))));
+    if (is_array($rawR)) {
+        if (array_is_list($rawR)) {
+            foreach ($rawR as $r) {
+                if (is_array($r)) {
+                    $redemptions[] = $r;
+                }
+            }
+        } elseif (isset($rawR['user_identifier']) || isset($rawR['customer_id']) || isset($rawR['voucher_code']) || isset($rawR['discount_amount']) || isset($rawR['order_amount'])) {
+            $redemptions[] = $rawR;
+        }
     }
 }
+
+if (isset($_GET['edit_campaign'])) {
+    $targetId = (int) $_GET['edit_campaign'];
+    foreach ($campaigns as $c) {
+        if ((int) ($c['id'] ?? 0) === $targetId) {
+            $editCampaign = $c;
+            $activeTab = 'campaigns';
+            break;
+        }
+    }
+}
+
+if (isset($_GET['edit_voucher'])) {
+    $targetId = (int) $_GET['edit_voucher'];
+    foreach ($vouchers as $v) {
+        if ((int) ($v['id'] ?? 0) === $targetId) {
+            $editVoucher = $v;
+            $activeTab = 'vouchers';
+            break;
+        }
+    }
+}
+
+$totalCampaigns = count($campaigns);
+$totalVouchers = count($vouchers);
+$totalTransactions = count($redemptions);
+$totalDiscountGiven = 0.0;
+foreach ($redemptions as $r) {
+    $totalDiscountGiven += (float) ($r['discount_amount'] ?? ($r['discount'] ?? 0));
+}
+
+$nowWib = new DateTimeImmutable('now', new DateTimeZone('Asia/Jakarta'));
+$defaultStartLocal = $nowWib->format('Y-m-d\TH:i');
+$defaultEndLocal = $nowWib->modify('+7 days')->format('Y-m-d\TH:i');
 ?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KodePromo Portal Admin — Full CRUD Kampanye, Voucher & Laporan</title>
+    <title>Admin Voucher — KodePromo</title>
     <style>
-        :root { --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #f8fafc; --muted: #94a3b8; --primary: #3b82f6; --success: #10b981; --danger: #ef4444; --warn: #f59e0b; }
-        * { box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
-        body { margin: 0; background: var(--bg); color: var(--text); padding: 24px; }
-        .container { max-width: 1240px; margin: 0 auto; }
-        .navbar { display: flex; justify-content: space-between; align-items: center; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 22px; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
-        .nav-links { display: flex; gap: 10px; align-items: center; }
-        .nav-tab { text-decoration: none; padding: 8px 14px; border-radius: 8px; font-size: 0.9rem; font-weight: 600; color: var(--muted); border: 1px solid transparent; }
-        .nav-tab.active { background: rgba(59,130,246,0.18); color: #60a5fa; border-color: #2563eb; }
-        .nav-tab:hover:not(.active) { color: var(--text); background: #0f172a; }
-        .badge { padding: 4px 10px; border-radius: 999px; font-size: 0.76rem; font-weight: 600; display: inline-block; }
-        .badge-ok { background: rgba(16,185,129,0.18); color: #34d399; border: 1px solid #059669; }
-        .badge-err { background: rgba(239,68,68,0.18); color: #f87171; border: 1px solid #dc2626; }
-        .badge-warn { background: rgba(245,158,11,0.18); color: #fbbf24; border: 1px solid #d97706; }
-        .flash { padding: 12px 16px; border-radius: 10px; margin-bottom: 18px; font-size: 0.9rem; font-weight: 600; }
-        .flash-ok { background: rgba(16,185,129,0.18); border: 1px solid #059669; color: #6ee7b7; }
-        .flash-err { background: rgba(239,68,68,0.18); border: 1px solid #dc2626; color: #fca5a5; }
-        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
-        @media (max-width: 900px) { .stats-grid { grid-template-columns: 1fr 1fr; } }
-        .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
-        .stat-card small { color: var(--muted); font-size: 0.78rem; display: block; margin-bottom: 6px; }
-        .stat-card strong { font-size: 1.32rem; color: #38bdf8; }
-        .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 22px; }
-        .card-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 16px; }
-        .card-header h2 { margin: 0; font-size: 1.05rem; }
-        .crud-box { background: #0f172a; border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 18px; }
-        .crud-box h3 { margin: 0 0 12px; font-size: 0.95rem; color: #38bdf8; }
-        .form-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-        @media (max-width: 950px) { .form-grid-4 { grid-template-columns: 1fr 1fr; } }
-        label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 4px; }
-        input[type="text"], input[type="number"], input[type="datetime-local"], select { background: #1e293b; border: 1px solid var(--border); color: var(--text); padding: 8px 10px; border-radius: 7px; width: 100%; font-size: 0.86rem; }
-        .btn { border: none; padding: 8px 13px; border-radius: 7px; font-weight: 600; cursor: pointer; font-size: 0.82rem; text-decoration: none; display: inline-block; }
-        .btn-primary { background: var(--primary); color: #fff; }
-        .btn-success { background: var(--success); color: #052e16; }
-        .btn-warn { background: var(--warn); color: #451a03; }
-        .btn-danger { background: var(--danger); color: #fff; }
-        .btn-muted { background: #334155; color: #e2e8f0; }
-        table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
-        th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-        th { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; }
-        .actions-cell { display: flex; gap: 6px; flex-wrap: wrap; }
-        .progress-bg { background: #0f172a; border-radius: 999px; height: 7px; width: 100px; overflow: hidden; margin-top: 4px; }
-        .progress-fill { background: var(--success); height: 100%; }
+        :root {
+            --sidebar-bg: #0f1f3d;
+            --sidebar-hover: #1a305c;
+            --sidebar-active: #2563eb;
+            --bg-main: #f4f6f9;
+            --bg-card: #ffffff;
+            --bg-subtle: #f8fafc;
+            --border-color: #e2e8f0;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-muted: #64748b;
+            --accent: #2563eb;
+            --accent-hover: #1d4ed8;
+            --danger: #dc2626;
+            --danger-hover: #b91c1c;
+            --success-bg: #f0fdf4;
+            --success-border: #bbf7d0;
+            --success-text: #166534;
+            --error-bg: #fef2f2;
+            --error-border: #fecaca;
+            --error-text: #991b1b;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-primary);
+            line-height: 1.5;
+        }
+        .layout { display: flex; min-height: 100vh; }
+        .sidebar {
+            width: 240px; flex-shrink: 0; background-color: var(--sidebar-bg);
+            color: #e2e8f0; display: flex; flex-direction: column; justify-content: space-between;
+        }
+        .sidebar-brand {
+            padding: 22px 20px; font-size: 19px; font-weight: 700;
+            color: #ffffff; border-bottom: 1px solid rgba(255, 255, 255, 0.08); letter-spacing: -0.02em;
+        }
+        .sidebar-nav { padding: 16px 12px; display: flex; flex-direction: column; gap: 6px; }
+        .nav-item {
+            display: block; padding: 10px 14px; border-radius: 8px; color: #cbd5e1;
+            text-decoration: none; font-size: 14px; font-weight: 500;
+            transition: background-color 0.15s ease, color 0.15s ease;
+        }
+        .nav-item:hover { background-color: var(--sidebar-hover); color: #ffffff; }
+        .nav-item.active { background-color: var(--sidebar-active); color: #ffffff; font-weight: 600; }
+        .sidebar-footer { padding: 16px 12px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+        .main-wrapper { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        .top-header {
+            background-color: var(--bg-card); border-bottom: 1px solid var(--border-color);
+            padding: 14px 28px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+        }
+        .admin-badge { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+        .content { padding: 26px 28px 44px; max-width: 1280px; width: 100%; }
+        .page-title-row {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 16px; margin-bottom: 22px; flex-wrap: wrap;
+        }
+        .page-title-row h1 { margin: 0 0 4px; font-size: 24px; font-weight: 700; }
+        .page-title-row p { margin: 0; font-size: 14px; color: var(--text-muted); }
+        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+        @media (max-width: 1024px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 560px) { .stats-grid { grid-template-columns: 1fr; } }
+        .stat-card { background-color: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 18px 20px; }
+        .stat-label { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
+        .stat-value { font-size: 24px; font-weight: 700; color: var(--text-primary); }
+        .card { background-color: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 20px 24px; margin-bottom: 22px; }
+        .card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+        .card-header h2 { margin: 0; font-size: 16px; font-weight: 600; }
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th {
+            text-align: left; font-size: 12px; font-weight: 600; color: var(--text-muted);
+            padding: 10px 12px; border-bottom: 1px solid var(--border-color); background-color: var(--bg-subtle);
+        }
+        td { padding: 12px; font-size: 14px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+        tr:last-child td { border-bottom: none; }
+        .status-text { font-size: 13px; font-weight: 600; color: var(--accent); }
+        .status-text.inactive { color: var(--text-muted); }
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center; padding: 8px 14px;
+            border-radius: 8px; font-size: 13px; font-weight: 600; border: 1px solid transparent;
+            cursor: pointer; text-decoration: none;
+        }
+        .btn-primary { background-color: var(--accent); color: #ffffff; }
+        .btn-primary:hover { background-color: var(--accent-hover); }
+        .btn-secondary { background-color: var(--bg-card); color: var(--text-primary); border-color: var(--border-color); }
+        .btn-secondary:hover { background-color: var(--bg-subtle); }
+        .btn-danger { background-color: var(--danger); color: #ffffff; }
+        .btn-danger:hover { background-color: var(--danger-hover); }
+        .action-group { display: inline-flex; align-items: center; gap: 8px; }
+        .form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+        @media (max-width: 900px) { .form-grid { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
+        .field label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
+        .field input, .field select {
+            width: 100%; padding: 9px 12px; border: 1px solid var(--border-color); border-radius: 8px;
+            font-size: 14px; color: var(--text-primary); background-color: var(--bg-card);
+        }
+        .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+        .form-actions { margin-top: 16px; display: flex; align-items: center; gap: 10px; }
+        .alert { padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-bottom: 18px; border: 1px solid transparent; }
+        .alert-success { background-color: var(--success-bg); border-color: var(--success-border); color: var(--success-text); }
+        .alert-error { background-color: var(--error-bg); border-color: var(--error-border); color: var(--error-text); }
+        .welcome-strip {
+            background-color: var(--bg-card); border: 1px solid var(--border-color);
+            border-radius: 10px; padding: 16px 20px; font-size: 14px; color: var(--text-secondary);
+        }
+        .welcome-strip strong { color: var(--text-primary); }
+        @media (max-width: 780px) {
+            .layout { flex-direction: column; }
+            .sidebar { width: 100%; }
+            .sidebar-nav { flex-direction: row; flex-wrap: wrap; }
+        }
     </style>
 </head>
 <body>
-<div class="container">
-    <div class="navbar">
-        <div>
-            <strong style="font-size:1.15rem;">KodePromo Owner / Admin Portal</strong>
-            <div style="font-size:0.78rem; color:var(--muted);">Full CRUD Kampanye, Pengaturan Kuota & Tanggal Voucher, Serta Audit Pemakaian</div>
-        </div>
-        <div class="nav-links">
-            <a href="index.php" class="nav-tab">Halaman Customer (Checkout)</a>
-            <a href="monitor.php" class="nav-tab active">Portal Admin (CRUD & Laporan)</a>
-        </div>
-        <div>
-            <?php if (($healthCheck['body']['status'] ?? '') === 'ok'): ?>
-                <span class="badge badge-ok">API Connected</span>
-            <?php else: ?>
-                <span class="badge badge-err">API Disconnected</span>
-            <?php endif; ?>
-        </div>
-    </div>
+    <div class="layout">
+        <aside class="sidebar">
+            <div>
+                <div class="sidebar-brand">KodePromo</div>
+                <nav class="sidebar-nav">
+                    <a href="monitor.php?tab=dashboard" class="nav-item <?= $activeTab === 'dashboard' ? 'active' : '' ?>">Dashboard</a>
+                    <a href="monitor.php?tab=campaigns" class="nav-item <?= $activeTab === 'campaigns' ? 'active' : '' ?>">Kampanye</a>
+                    <a href="monitor.php?tab=vouchers" class="nav-item <?= $activeTab === 'vouchers' ? 'active' : '' ?>">Kode Voucher</a>
+                    <a href="monitor.php?tab=transactions" class="nav-item <?= $activeTab === 'transactions' ? 'active' : '' ?>">Riwayat Penukaran</a>
+                </nav>
+            </div>
+            <div class="sidebar-footer">
+                <a href="index.php" class="nav-item">Halaman Checkout</a>
+            </div>
+        </aside>
 
-    <?php if ($flashMessage !== null): ?>
-        <div class="flash <?= $flashType === 'ok' ? 'flash-ok' : 'flash-err' ?>">
-            <?= htmlspecialchars($flashMessage) ?>
-        </div>
-    <?php endif; ?>
+        <div class="main-wrapper">
+            <header class="top-header">
+                <div class="admin-badge">Admin</div>
+                <a href="index.php" class="btn btn-secondary">Lihat Toko</a>
+            </header>
 
-    <div class="stats-grid">
-        <div class="stat-card">
-            <small>Total Kampanye</small>
-            <strong><?= count($campaigns) ?> Kampanye</strong>
-        </div>
-        <div class="stat-card">
-            <small>Total Kode Voucher</small>
-            <strong><?= count($vouchers) ?> Voucher</strong>
-        </div>
-        <div class="stat-card">
-            <small>Total Penukaran (Redemptions)</small>
-            <strong><?= $totalRedemptions ?> Transaksi</strong>
-        </div>
-        <div class="stat-card">
-            <small>Total Subsidi Diskon Diberikan</small>
-            <strong style="color:#34d399;"><?= rupiah($totalDiscountGiven) ?></strong>
-        </div>
-    </div>
-
-    <!-- BAGIAN 1: CRUD KAMPANYE & LAPORAN PER KAMPANYE -->
-    <div class="card">
-        <div class="card-header">
-            <h2>1. Manajemen Kampanye & Laporan Pemakaian (CRUD `/api/v1/campaigns`)</h2>
-            <a href="monitor.php" class="btn btn-muted">Refresh Data</a>
-        </div>
-
-        <form method="POST" action="monitor.php" class="crud-box">
-            <h3><?= $editingCampaign ? 'Edit Kampanye #' . $editingCampaign['id'] . ' (' . htmlspecialchars($editingCampaign['name']) . ')' : '+ Buat Kampanye Promo Baru' ?></h3>
-            <?php if ($editingCampaign): ?>
-                <input type="hidden" name="crud_action" value="update_campaign">
-                <input type="hidden" name="campaign_id" value="<?= (int) $editingCampaign['id'] ?>">
-            <?php else: ?>
-                <input type="hidden" name="crud_action" value="create_campaign">
-            <?php endif; ?>
-
-            <div class="form-grid-4">
-                <div>
-                    <label>Nama Kampanye</label>
-                    <input type="text" name="name" value="<?= htmlspecialchars($editingCampaign['name'] ?? '') ?>" placeholder="Contoh: Promo Akhir Bulan" required>
-                </div>
-                <div>
-                    <label>Tanggal Mulai (Start)</label>
-                    <input type="datetime-local" name="starts_at" value="<?= $editingCampaign ? toDatetimeLocal($editingCampaign['starts_at']) : date('Y-m-d\TH:i') ?>" required>
-                </div>
-                <div>
-                    <label>Tanggal Berakhir (End)</label>
-                    <input type="datetime-local" name="ends_at" value="<?= $editingCampaign ? toDatetimeLocal($editingCampaign['ends_at']) : date('Y-m-d\TH:i', strtotime('+14 days')) ?>" required>
-                </div>
-                <div>
-                    <label>Status & Aksi</label>
-                    <div style="display:flex; gap:10px; align-items:center; margin-top:4px;">
-                        <label style="margin:0; color:#e2e8f0; display:flex; align-items:center; gap:5px;">
-                            <input type="checkbox" name="is_active" <?= (!$editingCampaign || !empty($editingCampaign['is_active'])) ? 'checked' : '' ?>> Aktif
-                        </label>
-                        <button type="submit" class="btn <?= $editingCampaign ? 'btn-warn' : 'btn-success' ?>">
-                            <?= $editingCampaign ? 'Simpan Perubahan' : 'Tambah Kampanye' ?>
-                        </button>
-                        <?php if ($editingCampaign): ?>
-                            <a href="monitor.php" class="btn btn-muted">Batal</a>
-                        <?php endif; ?>
+            <main class="content">
+                <div class="page-title-row">
+                    <div>
+                        <h1>
+                            <?php
+                            if ($activeTab === 'campaigns') {
+                                echo 'Kampanye';
+                            } elseif ($activeTab === 'vouchers') {
+                                echo 'Kode Voucher';
+                            } elseif ($activeTab === 'transactions') {
+                                echo 'Riwayat Penukaran';
+                            } else {
+                                echo 'Dashboard';
+                            }
+                            ?>
+                        </h1>
+                        <p>Kelola kampanye, kode voucher, kuota, dan pantau penggunaan promo.</p>
                     </div>
-                </div>
-            </div>
-        </form>
 
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Nama Kampanye</th>
-                    <th>Rentang Tanggal Berlaku</th>
-                    <th>Status</th>
-                    <th>Total Redeem</th>
-                    <th>Total Diskon</th>
-                    <th>Aksi CRUD</th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php foreach ($campaigns as $c):
-                $rep = $campaignReportsById[$c['id']] ?? null;
-                $now = time();
-                $isExp = strtotime($c['ends_at']) < $now;
-            ?>
-                <tr>
-                    <td>#<?= (int) $c['id'] ?></td>
-                    <td><strong><?= htmlspecialchars($c['name']) ?></strong></td>
-                    <td>
-                        <?= date('d M Y H:i', strtotime($c['starts_at'])) ?> —<br>
-                        <?= date('d M Y H:i', strtotime($c['ends_at'])) ?>
-                    </td>
-                    <td>
-                        <?php if ($isExp): ?>
-                            <span class="badge badge-err">Expired</span>
-                        <?php elseif (!empty($c['is_active'])): ?>
-                            <span class="badge badge-ok">Aktif</span>
-                        <?php else: ?>
-                            <span class="badge badge-warn">Nonaktif</span>
-                        <?php endif; ?>
-                    </td>
-                    <td><strong><?= (int) ($rep['summary']['total_redemptions'] ?? 0) ?>x</strong></td>
-                    <td style="color:#34d399;"><strong><?= rupiah($rep['summary']['total_discount_given'] ?? 0) ?></strong></td>
-                    <td class="actions-cell">
-                        <a href="monitor.php?edit_campaign=<?= (int) $c['id'] ?>" class="btn btn-warn">Edit</a>
-                        <form method="POST" action="monitor.php" onsubmit="return confirm('Hapus kampanye ini beserta seluruh vouchernya?');">
-                            <input type="hidden" name="crud_action" value="delete_campaign">
-                            <input type="hidden" name="campaign_id" value="<?= (int) $c['id'] ?>">
-                            <button type="submit" class="btn btn-danger">Hapus</button>
-                        </form>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-    </div>
+                    <?php if ($activeTab === 'dashboard'): ?>
+                        <div class="action-group">
+                            <a href="monitor.php?tab=campaigns" class="btn btn-primary">+ Buat Kampanye</a>
+                            <a href="monitor.php?tab=vouchers" class="btn btn-secondary">+ Buat Kode Voucher</a>
+                        </div>
+                    <?php endif; ?>
+                </div>
 
-    <!-- BAGIAN 2: CRUD KODE VOUCHER & MONITOR KUOTA -->
-    <div class="card">
-        <div class="card-header">
-            <h2>2. Manajemen Kode Voucher & Kuota Maksimal (CRUD `/api/v1/vouchers`)</h2>
-        </div>
+                <?php if ($flashSuccess): ?>
+                    <div class="alert alert-success"><?= htmlspecialchars($flashSuccess) ?></div>
+                <?php endif; ?>
 
-        <form method="POST" action="monitor.php" class="crud-box">
-            <h3><?= $editingVoucher ? 'Edit Voucher #' . $editingVoucher['id'] . ' (' . htmlspecialchars($editingVoucher['code']) . ')' : '+ Buat Kode Voucher Baru' ?></h3>
-            <?php if ($editingVoucher): ?>
-                <input type="hidden" name="crud_action" value="update_voucher">
-                <input type="hidden" name="voucher_id" value="<?= (int) $editingVoucher['id'] ?>">
-            <?php else: ?>
-                <input type="hidden" name="crud_action" value="create_voucher">
-            <?php endif; ?>
+                <?php if ($flashError): ?>
+                    <div class="alert alert-error"><?= htmlspecialchars($flashError) ?></div>
+                <?php endif; ?>
 
-            <div class="form-grid-4" style="margin-bottom:12px;">
-                <div>
-                    <label>Kampanye Induk</label>
-                    <select name="campaign_id" required>
-                        <?php foreach ($campaigns as $c): ?>
-                            <option value="<?= (int) $c['id'] ?>" <?= ($editingVoucher && (int) $editingVoucher['campaign_id'] === (int) $c['id']) ? 'selected' : '' ?>>
-                                #<?= (int) $c['id'] ?> — <?= htmlspecialchars($c['name']) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div>
-                    <label>Kode Voucher</label>
-                    <input type="text" name="code" value="<?= htmlspecialchars($editingVoucher['code'] ?? '') ?>" placeholder="Contoh: GAJIAN30" required>
-                </div>
-                <div>
-                    <label>Tipe Diskon</label>
-                    <select name="discount_type" required>
-                        <option value="percentage" <?= ($editingVoucher['discount_type'] ?? '') === 'percentage' ? 'selected' : '' ?>>Persentase (%)</option>
-                        <option value="fixed" <?= ($editingVoucher['discount_type'] ?? '') === 'fixed' ? 'selected' : '' ?>>Nominal Tetap (Rp)</option>
-                    </select>
-                </div>
-                <div>
-                    <label>Nilai Diskon (% atau Rp)</label>
-                    <input type="number" step="0.01" name="discount_value" value="<?= htmlspecialchars((string) ($editingVoucher['discount_value'] ?? '25')) ?>" required>
-                </div>
-            </div>
-
-            <div class="form-grid-4">
-                <div>
-                    <label>Maks. Potongan (Khusus %)</label>
-                    <input type="number" step="0.01" name="max_discount" value="<?= htmlspecialchars((string) ($editingVoucher['max_discount'] ?? '40000')) ?>" placeholder="Kosongkan jika nominal">
-                </div>
-                <div>
-                    <label>Minimal Belanja (Rp)</label>
-                    <input type="number" step="0.01" name="min_order_amount" value="<?= htmlspecialchars((string) ($editingVoucher['min_order_amount'] ?? '150000')) ?>" required>
-                </div>
-                <div>
-                    <label>Kuota Maksimal Voucher</label>
-                    <input type="number" min="1" name="quota_total" value="<?= htmlspecialchars((string) ($editingVoucher['quota_total'] ?? '50')) ?>" placeholder="Kosongkan jika unlimited">
-                </div>
-                <div>
-                    <label>Batas/User & Aksi</label>
-                    <div style="display:flex; gap:8px; align-items:center;">
-                        <input type="number" min="1" name="max_uses_per_user" value="<?= (int) ($editingVoucher['max_uses_per_user'] ?? 1) ?>" style="width:58px;" title="Batas pemakaian per customer">
-                        <label style="margin:0; color:#e2e8f0; display:flex; align-items:center; gap:4px;">
-                            <input type="checkbox" name="is_active" <?= (!$editingVoucher || !empty($editingVoucher['is_active'])) ? 'checked' : '' ?>> Aktif
-                        </label>
-                        <button type="submit" class="btn <?= $editingVoucher ? 'btn-warn' : 'btn-primary' ?>">
-                            <?= $editingVoucher ? 'Update' : 'Simpan' ?>
-                        </button>
-                        <?php if ($editingVoucher): ?>
-                            <a href="monitor.php" class="btn btn-muted">Batal</a>
-                        <?php endif; ?>
+                <section class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Kampanye</div>
+                        <div class="stat-value"><?= $totalCampaigns ?></div>
                     </div>
-                </div>
-            </div>
-        </form>
+                    <div class="stat-card">
+                        <div class="stat-label">Total Kode Voucher</div>
+                        <div class="stat-value"><?= $totalVouchers ?></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Total Transaksi</div>
+                        <div class="stat-value"><?= $totalTransactions ?></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Total Diskon Diberikan</div>
+                        <div class="stat-value"><?= rupiah($totalDiscountGiven) ?></div>
+                    </div>
+                </section>
 
-        <table>
-            <thead>
-                <tr>
-                    <th>Kode</th>
-                    <th>Kampanye</th>
-                    <th>Diskon</th>
-                    <th>Min. Belanja</th>
-                    <th>Kuota Terpakai</th>
-                    <th>Batas/User</th>
-                    <th>Status</th>
-                    <th>Aksi CRUD</th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php foreach ($vouchers as $v):
-                $used = (int) $v['quota_used'];
-                $total = $v['quota_total'] !== null ? (int) $v['quota_total'] : null;
-                $pct = ($total && $total > 0) ? min(100, round(($used / $total) * 100)) : 0;
-                $isExpired = isset($v['campaign']['ends_at']) && strtotime($v['campaign']['ends_at']) < time();
-                $isSoldOut = ($total !== null && $used >= $total);
-            ?>
-                <tr>
-                    <td><strong><?= htmlspecialchars($v['code']) ?></strong></td>
-                    <td><?= htmlspecialchars($v['campaign']['name'] ?? '-') ?></td>
-                    <td>
-                        <?= $v['discount_type'] === 'percentage'
-                            ? $v['discount_value'] . '% (maks ' . rupiah($v['max_discount'] ?? 0) . ')'
-                            : rupiah($v['discount_value']) ?>
-                    </td>
-                    <td><?= rupiah($v['min_order_amount']) ?></td>
-                    <td>
-                        <strong><?= $used ?> / <?= $total ?? '∞' ?></strong>
-                        <?php if ($total !== null): ?>
-                            <div class="progress-bg">
-                                <div class="progress-fill" style="width: <?= $pct ?>%; background: <?= $isSoldOut ? '#ef4444' : '#10b981' ?>;"></div>
+                <?php if ($activeTab === 'dashboard' || $activeTab === 'campaigns'): ?>
+                    <section class="card">
+                        <div class="card-header">
+                            <h2><?= $editCampaign ? 'Edit Kampanye' : 'Tambah Kampanye' ?></h2>
+                            <?php if ($editCampaign): ?>
+                                <a href="monitor.php?tab=campaigns" class="btn btn-secondary">Batal Edit</a>
+                            <?php endif; ?>
+                        </div>
+
+                        <form method="post">
+                            <input type="hidden" name="action" value="<?= $editCampaign ? 'update_campaign' : 'create_campaign' ?>">
+                            <input type="hidden" name="redirect_tab" value="<?= htmlspecialchars($activeTab) ?>">
+                            <?php if ($editCampaign): ?>
+                                <input type="hidden" name="id" value="<?= (int) ($editCampaign['id'] ?? 0) ?>">
+                            <?php endif; ?>
+
+                            <div class="form-grid">
+                                <div class="field">
+                                    <label for="camp_name">Nama Kampanye</label>
+                                    <input type="text" id="camp_name" name="name" value="<?= htmlspecialchars((string) ($editCampaign['name'] ?? '')) ?>" placeholder="Contoh: Promo Akhir Tahun" required>
+                                </div>
+                                <div class="field">
+                                    <label for="camp_status">Status</label>
+                                    <?php $cStatus = strtolower((string) ($editCampaign['status'] ?? 'active')); ?>
+                                    <select id="camp_status" name="status">
+                                        <option value="active" <?= $cStatus === 'active' || $cStatus === 'aktif' ? 'selected' : '' ?>>Aktif</option>
+                                        <option value="inactive" <?= $cStatus === 'inactive' || $cStatus === 'nonaktif' ? 'selected' : '' ?>>Nonaktif</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="camp_desc">Keterangan</label>
+                                    <input type="text" id="camp_desc" name="description" value="<?= htmlspecialchars((string) ($editCampaign['description'] ?? '')) ?>" placeholder="Deskripsi singkat kampanye">
+                                </div>
+                                <div class="field">
+                                    <label for="camp_start">Tanggal & Jam Mulai (WIB)</label>
+                                    <input type="datetime-local" id="camp_start" name="starts_at" value="<?= htmlspecialchars($editCampaign ? toDatetimeLocal($editCampaign['starts_at'] ?? null) : $defaultStartLocal) ?>" required>
+                                </div>
+                                <div class="field">
+                                    <label for="camp_end">Tanggal & Jam Selesai (WIB)</label>
+                                    <input type="datetime-local" id="camp_end" name="ends_at" value="<?= htmlspecialchars($editCampaign ? toDatetimeLocal($editCampaign['ends_at'] ?? null) : $defaultEndLocal) ?>" required>
+                                </div>
                             </div>
-                        <?php endif; ?>
-                    </td>
-                    <td><?= (int) ($v['max_uses_per_user'] ?? 1) ?>x</td>
-                    <td>
-                        <?php if ($isExpired): ?>
-                            <span class="badge badge-err">Expired</span>
-                        <?php elseif ($isSoldOut): ?>
-                            <span class="badge badge-warn">Kuota Habis</span>
-                        <?php elseif (!empty($v['is_active'])): ?>
-                            <span class="badge badge-ok">Aktif</span>
-                        <?php else: ?>
-                            <span class="badge badge-err">Nonaktif</span>
-                        <?php endif; ?>
-                    </td>
-                    <td class="actions-cell">
-                        <a href="monitor.php?edit_voucher=<?= (int) $v['id'] ?>" class="btn btn-warn">Edit</a>
-                        <form method="POST" action="monitor.php" onsubmit="return confirm('Hapus voucher <?= htmlspecialchars($v['code']) ?>?');">
-                            <input type="hidden" name="crud_action" value="delete_voucher">
-                            <input type="hidden" name="voucher_id" value="<?= (int) $v['id'] ?>">
-                            <button type="submit" class="btn btn-danger">Hapus</button>
-                        </form>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-    </div>
 
-    <!-- BAGIAN 3: AUDIT LOG PEMAKAIAN PER CUSTOMER -->
-    <div class="card">
-        <div class="card-header">
-            <h2>3. Log Penukaran Customer (Bukti Batas 1x Pemakaian per Akun)</h2>
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary"><?= $editCampaign ? 'Simpan Perubahan' : '+ Buat Kampanye' ?></button>
+                            </div>
+                        </form>
+                    </section>
+
+                    <section class="card">
+                        <div class="card-header">
+                            <h2>Daftar Kampanye</h2>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Nama Kampanye</th>
+                                        <th>Periode (WIB)</th>
+                                        <th>Status</th>
+                                        <th>Aksi</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (empty($campaigns)): ?>
+                                        <tr><td colspan="5">Belum ada kampanye.</td></tr>
+                                    <?php else: ?>
+                                        <?php foreach ($campaigns as $c): ?>
+                                            <?php
+                                            $cId = (int) ($c['id'] ?? 0);
+                                            $st = strtolower((string) ($c['status'] ?? 'active'));
+                                            $isAct = ($st === 'active' || $st === 'aktif');
+                                            ?>
+                                            <tr>
+                                                <td>#<?= $cId ?></td>
+                                                <td><strong><?= htmlspecialchars((string) ($c['name'] ?? '-')) ?></strong></td>
+                                                <td>
+                                                    <?= htmlspecialchars(formatWibDisplay($c['starts_at'] ?? null, 'd M Y H:i')) ?>
+                                                    &ndash;
+                                                    <?= htmlspecialchars(formatWibDisplay($c['ends_at'] ?? null, 'd M Y H:i')) ?>
+                                                </td>
+                                                <td><span class="status-text <?= $isAct ? '' : 'inactive' ?>"><?= $isAct ? 'Aktif' : 'Nonaktif' ?></span></td>
+                                                <td>
+                                                    <div class="action-group">
+                                                        <a href="monitor.php?tab=campaigns&edit_campaign=<?= $cId ?>" class="btn btn-secondary">Edit</a>
+                                                        <form method="post" style="display:inline;" onsubmit="return confirm('Hapus kampanye ini?');">
+                                                            <input type="hidden" name="action" value="delete_campaign">
+                                                            <input type="hidden" name="id" value="<?= $cId ?>">
+                                                            <input type="hidden" name="redirect_tab" value="<?= htmlspecialchars($activeTab) ?>">
+                                                            <button type="submit" class="btn btn-danger">Hapus</button>
+                                                        </form>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                <?php endif; ?>
+
+                <?php if ($activeTab === 'dashboard' || $activeTab === 'vouchers'): ?>
+                    <section class="card">
+                        <div class="card-header">
+                            <h2><?= $editVoucher ? 'Edit Kode Voucher' : 'Tambah Kode Voucher' ?></h2>
+                            <?php if ($editVoucher): ?>
+                                <a href="monitor.php?tab=vouchers" class="btn btn-secondary">Batal Edit</a>
+                            <?php endif; ?>
+                        </div>
+
+                        <form method="post">
+                            <input type="hidden" name="action" value="<?= $editVoucher ? 'update_voucher' : 'create_voucher' ?>">
+                            <input type="hidden" name="redirect_tab" value="<?= htmlspecialchars($activeTab) ?>">
+                            <?php if ($editVoucher): ?>
+                                <input type="hidden" name="id" value="<?= (int) ($editVoucher['id'] ?? 0) ?>">
+                            <?php endif; ?>
+
+                            <div class="form-grid">
+                                <div class="field">
+                                    <label for="v_campaign">Kampanye</label>
+                                    <?php $selCampId = (int) ($editVoucher['campaign_id'] ?? ($campaigns[0]['id'] ?? 0)); ?>
+                                    <select id="v_campaign" name="campaign_id" required>
+                                        <?php foreach ($campaigns as $c): ?>
+                                            <?php $cid = (int) ($c['id'] ?? 0); ?>
+                                            <option value="<?= $cid ?>" <?= $cid === $selCampId ? 'selected' : '' ?>>
+                                                <?= htmlspecialchars((string) ($c['name'] ?? ('Kampanye #' . $cid))) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="v_code">Kode Voucher</label>
+                                    <input type="text" id="v_code" name="code" value="<?= htmlspecialchars((string) ($editVoucher['code'] ?? '')) ?>" placeholder="Contoh: HEMAT25" style="text-transform:uppercase;" required>
+                                </div>
+                                <div class="field">
+                                    <label for="v_status">Status</label>
+                                    <?php $vSt = strtolower((string) ($editVoucher['status'] ?? 'active')); ?>
+                                    <select id="v_status" name="status">
+                                        <option value="active" <?= $vSt === 'active' || $vSt === 'aktif' ? 'selected' : '' ?>>Aktif</option>
+                                        <option value="inactive" <?= $vSt === 'inactive' || $vSt === 'nonaktif' ? 'selected' : '' ?>>Nonaktif</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="v_dtype">Tipe Diskon</label>
+                                    <?php $dType = strtolower((string) ($editVoucher['discount_type'] ?? 'percentage')); ?>
+                                    <select id="v_dtype" name="discount_type">
+                                        <option value="percentage" <?= $dType === 'percent' || $dType === 'percentage' ? 'selected' : '' ?>>Persentase (%)</option>
+                                        <option value="fixed" <?= $dType === 'fixed' ? 'selected' : '' ?>>Nominal (Rp)</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="v_dval">Nilai Diskon</label>
+                                    <input type="number" step="any" id="v_dval" name="discount_value" value="<?= htmlspecialchars((string) ($editVoucher['discount_value'] ?? '20')) ?>" required>
+                                </div>
+                                <div class="field">
+                                    <label for="v_maxdisc">Maksimal Diskon (Rp, opsional)</label>
+                                    <input type="number" step="any" id="v_maxdisc" name="max_discount" value="<?= htmlspecialchars((string) ($editVoucher['max_discount'] ?? '')) ?>">
+                                </div>
+                                <div class="field">
+                                    <label for="v_minorder">Minimal Belanja (Rp)</label>
+                                    <input type="number" step="any" id="v_minorder" name="min_order_amount" value="<?= htmlspecialchars((string) ($editVoucher['min_order_amount'] ?? ($editVoucher['min_purchase'] ?? '100000'))) ?>" required>
+                                </div>
+                                <div class="field">
+                                    <label for="v_quota">Kuota Total</label>
+                                    <input type="number" id="v_quota" name="quota" value="<?= htmlspecialchars((string) ($editVoucher['quota_total'] ?? ($editVoucher['quota'] ?? '10'))) ?>" min="1" required>
+                                </div>
+                                <div class="field">
+                                    <label for="v_limit">Batas Pakai per Akun</label>
+                                    <input type="number" id="v_limit" name="per_user_limit" value="<?= htmlspecialchars((string) ($editVoucher['per_user_limit'] ?? '1')) ?>" min="1" required>
+                                </div>
+                                <div class="field">
+                                    <label for="v_start">Berlaku Mulai (WIB)</label>
+                                    <input type="datetime-local" id="v_start" name="starts_at" value="<?= htmlspecialchars($editVoucher ? toDatetimeLocal($editVoucher['starts_at'] ?? null) : $defaultStartLocal) ?>" required>
+                                </div>
+                                <div class="field">
+                                    <label for="v_end">Berlaku Sampai (WIB)</label>
+                                    <input type="datetime-local" id="v_end" name="ends_at" value="<?= htmlspecialchars($editVoucher ? toDatetimeLocal($editVoucher['ends_at'] ?? null) : $defaultEndLocal) ?>" required>
+                                </div>
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary"><?= $editVoucher ? 'Simpan Perubahan' : '+ Buat Kode Voucher' ?></button>
+                            </div>
+                        </form>
+                    </section>
+
+                    <section class="card">
+                        <div class="card-header">
+                            <h2>Kode Voucher & Kuota</h2>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Kode</th>
+                                        <th>Kampanye</th>
+                                        <th>Diskon</th>
+                                        <th>Min. Belanja</th>
+                                        <th>Kuota Terpakai</th>
+                                        <th>Batas / Akun</th>
+                                        <th>Periode (WIB)</th>
+                                        <th>Status</th>
+                                        <th>Aksi</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (empty($vouchers)): ?>
+                                        <tr><td colspan="9">Belum ada kode voucher.</td></tr>
+                                    <?php else: ?>
+                                        <?php foreach ($vouchers as $v): ?>
+                                            <?php
+                                            $vId = (int) ($v['id'] ?? 0);
+                                            $cId = (int) ($v['campaign_id'] ?? 0);
+                                            $cName = isset($campMap[$cId]) ? (string) ($campMap[$cId]['name'] ?? '-') : ('#' . $cId);
+                                            $dType = strtolower((string) ($v['discount_type'] ?? 'fixed'));
+                                            $dVal = (float) ($v['discount_value'] ?? 0);
+                                            $maxD = isset($v['max_discount']) && $v['max_discount'] !== null ? (float) $v['max_discount'] : null;
+                                            $minOrd = (float) ($v['min_order_amount'] ?? ($v['min_purchase'] ?? 0));
+                                            $qTot = (int) ($v['quota_total'] ?? ($v['quota'] ?? 0));
+                                            $qUsed = (int) ($v['quota_used'] ?? ($v['used_count'] ?? ($v['redeemed_count'] ?? 0)));
+                                            $perLim = (int) ($v['per_user_limit'] ?? 1);
+                                            $vSt = strtolower((string) ($v['status'] ?? 'active'));
+                                            $vAct = ($vSt === 'active' || $vSt === 'aktif');
+
+                                            $discText = ($dType === 'percent' || $dType === 'percentage')
+                                                ? rtrim(rtrim(number_format($dVal, 2, '.', ''), '0'), '.') . '%' . ($maxD ? ' (maks ' . rupiah($maxD) . ')' : '')
+                                                : rupiah($dVal);
+                                            ?>
+                                            <tr>
+                                                <td><strong><?= htmlspecialchars((string) ($v['code'] ?? '-')) ?></strong></td>
+                                                <td><?= htmlspecialchars($cName) ?></td>
+                                                <td><?= htmlspecialchars($discText) ?></td>
+                                                <td><?= rupiah($minOrd) ?></td>
+                                                <td><?= $qUsed ?> / <?= $qTot ?></td>
+                                                <td><?= $perLim ?>x</td>
+                                                <td>
+                                                    <?= htmlspecialchars(formatWibDisplay($v['starts_at'] ?? null, 'd M Y H:i')) ?>
+                                                    &ndash;
+                                                    <?= htmlspecialchars(formatWibDisplay($v['ends_at'] ?? null, 'd M Y H:i')) ?>
+                                                </td>
+                                                <td><span class="status-text <?= $vAct ? '' : 'inactive' ?>"><?= $vAct ? 'Aktif' : 'Nonaktif' ?></span></td>
+                                                <td>
+                                                    <div class="action-group">
+                                                        <a href="monitor.php?tab=vouchers&edit_voucher=<?= $vId ?>" class="btn btn-secondary">Edit</a>
+                                                        <form method="post" style="display:inline;" onsubmit="return confirm('Hapus voucher ini?');">
+                                                            <input type="hidden" name="action" value="delete_voucher">
+                                                            <input type="hidden" name="id" value="<?= $vId ?>">
+                                                            <input type="hidden" name="redirect_tab" value="<?= htmlspecialchars($activeTab) ?>">
+                                                            <button type="submit" class="btn btn-danger">Hapus</button>
+                                                        </form>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                <?php endif; ?>
+
+                <?php if ($activeTab === 'dashboard' || $activeTab === 'transactions'): ?>
+                    <section class="card">
+                        <div class="card-header">
+                            <h2>Riwayat Penukaran Voucher</h2>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Waktu (WIB)</th>
+                                        <th>Customer</th>
+                                        <th>Kode Voucher</th>
+                                        <th>Belanja Awal</th>
+                                        <th>Diskon</th>
+                                        <th>Total Bayar</th>
+                                        <th>Ref. Pesanan</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (empty($redemptions)): ?>
+                                        <tr><td colspan="7">Belum ada riwayat penukaran voucher.</td></tr>
+                                    <?php else: ?>
+                                        <?php foreach ($redemptions as $r): ?>
+                                            <?php
+                                            $origAmt = (float) ($r['order_amount'] ?? ($r['order_total'] ?? ($r['original_amount'] ?? 0)));
+                                            $discAmt = (float) ($r['discount_amount'] ?? ($r['discount'] ?? 0));
+                                            $finalAmt = isset($r['final_amount']) ? (float) $r['final_amount'] : (isset($r['final_total']) ? (float) $r['final_total'] : max(0, $origAmt - $discAmt));
+                                            $vCodeRow = strtoupper((string) ($r['voucher_code'] ?? ($r['code'] ?? ($r['voucher']['code'] ?? ($r['voucher_id'] ?? '-')))));
+                                            $custRow = (string) ($r['user_identifier'] ?? ($r['customer_id'] ?? '-'));
+                                            $orderRow = (string) ($r['order_id'] ?? ($r['order_ref'] ?? ($r['reference_code'] ?? '-')));
+                                            ?>
+                                            <tr>
+                                                <td><?= htmlspecialchars(formatWibDisplay($r['redeemed_at'] ?? ($r['created_at'] ?? null), 'd M Y H:i')) ?></td>
+                                                <td><strong><?= htmlspecialchars($custRow) ?></strong></td>
+                                                <td><?= htmlspecialchars($vCodeRow) ?></td>
+                                                <td><?= rupiah($origAmt) ?></td>
+                                                <td><?= rupiah($discAmt) ?></td>
+                                                <td><strong><?= rupiah($finalAmt) ?></strong></td>
+                                                <td><?= htmlspecialchars($orderRow) ?></td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                <?php endif; ?>
+
+                <div class="welcome-strip">
+                    <strong>Selamat datang kembali, Admin!</strong> Kelola kampanye dan pantau penggunaan voucher dengan mudah.
+                </div>
+            </main>
         </div>
-        <?php if (empty($redemptions)): ?>
-            <p style="color:var(--muted); font-size:0.88rem;">Belum ada transaksi redeem. Silakan coba transaksi di <strong>Halaman Customer (Checkout)</strong>.</p>
-        <?php else: ?>
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID Akun & Nama Customer</th>
-                        <th>Kode Voucher</th>
-                        <th>Order ID</th>
-                        <th>Total Belanja</th>
-                        <th>Potongan</th>
-                        <th>Waktu Redeem</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php foreach ($redemptions as $r): ?>
-                    <tr>
-                        <td><strong><?= htmlspecialchars($r['user_identifier']) ?></strong></td>
-                        <td><span class="badge badge-ok"><?= htmlspecialchars($r['voucher']['code'] ?? '-') ?></span></td>
-                        <td><?= htmlspecialchars($r['order_id']) ?></td>
-                        <td><?= rupiah($r['order_amount']) ?></td>
-                        <td style="color:#34d399;">- <?= rupiah($r['discount_amount']) ?></td>
-                        <td><?= date('d M Y H:i:s', strtotime($r['redeemed_at'])) ?></td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
-        <?php endif; ?>
     </div>
-</div>
 </body>
 </html>
