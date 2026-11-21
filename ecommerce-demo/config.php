@@ -65,18 +65,34 @@ function rupiah(float|int $amount): string
     return 'Rp ' . number_format($amount, 0, ',', '.');
 }
 
-function toIsoWib(string $datetimeLocal): string
+function parseWibDateTime(?string $dateStr): ?DateTimeImmutable
 {
-    $dt = new DateTime($datetimeLocal, new DateTimeZone('Asia/Jakarta'));
-    return $dt->format(DateTime::ATOM);
+    if (!$dateStr) {
+        return null;
+    }
+    $wib = new DateTimeZone('Asia/Jakarta');
+    $clean = str_replace('T', ' ', trim($dateStr));
+    try {
+        return (new DateTimeImmutable($clean, $wib))->setTimezone($wib);
+    } catch (Throwable $e) {
+        return null;
+    }
 }
 
-function toDatetimeLocal(?string $isoString): string
+function toIsoWib(string $datetimeLocal): string
 {
-    if (!$isoString) {
-        return '';
-    }
-    $dt = new DateTime($isoString);
-    $dt->setTimezone(new DateTimeZone('Asia/Jakarta'));
-    return $dt->format('Y-m-d\TH:i');
+    $dt = parseWibDateTime($datetimeLocal) ?? new DateTimeImmutable('now', new DateTimeZone('Asia/Jakarta'));
+    return $dt->format('Y-m-d H:i:s');
+}
+
+function toDatetimeLocal(?string $dateStr): string
+{
+    $dt = parseWibDateTime($dateStr);
+    return $dt ? $dt->format('Y-m-d\TH:i') : '';
+}
+
+function formatWibDisplay(?string $dateStr, string $format = 'd M Y H:i'): string
+{
+    $dt = parseWibDateTime($dateStr);
+    return $dt ? $dt->format($format) . ' WIB' : '-';
 }
