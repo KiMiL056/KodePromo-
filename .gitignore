@@ -1,0 +1,24 @@
+﻿# Environment & Rahasia (WAJIB DIABAIKAN)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Dependencies
+/api/vendor/
+/api/node_modules/
+/ecommerce-demo/vendor/
+/ecommerce-demo/node_modules/
+
+# Laravel & Testing Cache
+/api/storage/*.key
+/api/.phpunit.result.cache
+/ecommerce-demo/storage/*.key
+/ecommerce-demo/.phpunit.result.cache
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
